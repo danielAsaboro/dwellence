@@ -36,6 +36,10 @@ function sensorPayload({ requestId, nonce, timestamp = Date.now(), temperatureC 
 function signedReading(privateKey, payload) {
   return sign(null, Buffer.from(`${payload.requestId}\n${payload.nonce}\n${payload.timestamp}\n${payload.temperatureC}\n${payload.humidityPercent}`), privateKey).toString('hex')
 }
+async function registerSensor(url, contributor, metadata) {
+  const challenge = await json(url, '/api/sensors/registration-challenge', { method: 'POST', headers: { authorization: `Bearer ${contributor.token}` }, body: JSON.stringify(metadata) })
+  return json(url, '/api/sensors/register', { method: 'POST', headers: { authorization: `Bearer ${contributor.token}` }, body: JSON.stringify({ ...metadata, registrationChallengeId: challenge.body.challengeId, walletPublicKey: contributor.keyPair.publicKey.toHex(), walletSignature: contributor.keyPair.sign(new TextEncoder().encode(challenge.body.message)).toHex() }) })
+}
 
 describe('signed sensor readings', () => {
   it('accepts one valid physical-sensor payload and rejects its replay', async () => {
@@ -48,7 +52,7 @@ describe('signed sensor readings', () => {
       await json(url, `/api/invitations/${request.body.shareCode}/accept`, { method: 'POST', headers: { authorization: `Bearer ${contributor.token}` }, body: '{}' })
       const { privateKey, publicKey } = generateKeyPairSync('ed25519')
       const rawPublicKey = publicKey.export({ format: 'der', type: 'spki' }).subarray(-32).toString('hex')
-      const sensor = await json(url, '/api/sensors/register', { method: 'POST', headers: { authorization: `Bearer ${contributor.token}` }, body: JSON.stringify({ publicKey: rawPublicKey, model: 'BME280', firmware: '1.0.0', calibrationStatus: 'manufacturer-specified' }) })
+      const sensor = await registerSensor(url, contributor, { publicKey: rawPublicKey, model: 'BME280', firmware: '1.0.0', calibrationStatus: 'manufacturer-specified' })
       const challenge = await json(url, `/api/sensors/${sensor.body.id}/challenge`, { method: 'POST', headers: { authorization: `Bearer ${contributor.token}` }, body: '{}' })
       const payload = sensorPayload({ requestId: request.body.id, nonce: challenge.body.nonce })
       const reading = { ...payload, signature: signedReading(privateKey, payload) }
@@ -66,13 +70,23 @@ describe('signed sensor readings', () => {
       const contributor = await auth(url, 'contributor')
       const { privateKey, publicKey } = generateKeyPairSync('ed25519')
       const rawPublicKey = publicKey.export({ format: 'der', type: 'spki' }).subarray(-32).toString('hex')
-      const sensor = await json(url, '/api/sensors/register', { method: 'POST', headers: { authorization: `Bearer ${contributor.token}` }, body: JSON.stringify({ publicKey: rawPublicKey, model: 'BME280', firmware: '1.0.0', calibrationStatus: 'manufacturer-specified' }) })
+      const sensor = await registerSensor(url, contributor, { publicKey: rawPublicKey, model: 'BME280', firmware: '1.0.0', calibrationStatus: 'manufacturer-specified' })
       const challenge = await json(url, `/api/sensors/${sensor.body.id}/challenge`, { method: 'POST', headers: { authorization: `Bearer ${contributor.token}` }, body: '{}' })
       const payload = sensorPayload({ requestId: 'req_not_used', nonce: challenge.body.nonce })
       const tampered = { ...payload, temperatureC: 35, signature: signedReading(privateKey, payload) }
       const rejected = await json(url, `/api/sensors/${sensor.body.id}/readings`, { method: 'POST', body: JSON.stringify(tampered) })
       expect(rejected.status).toBe(422)
       expect(rejected.body.code).toBe('SENSOR_SIGNATURE_INVALID')
+    })
+  })
+
+  it('rejects sensor registration without a wallet signature over its metadata', async () => {
+    await withApi(async (url) => {
+      const contributor = await auth(url, 'contributor')
+      const { publicKey } = generateKeyPairSync('ed25519')
+      const result = await json(url, '/api/sensors/register', { method: 'POST', headers: { authorization: `Bearer ${contributor.token}` }, body: JSON.stringify({ publicKey: publicKey.export({ format: 'der', type: 'spki' }).subarray(-32).toString('hex'), model: 'BME280', firmware: '1.0.0', calibrationStatus: 'manufacturer-specified' }) })
+      expect(result.status).toBe(401)
+      expect(result.body.code).toBe('SENSOR_BINDING_SIGNATURE_REQUIRED')
     })
   })
 })

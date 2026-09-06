@@ -4,7 +4,9 @@ This protocol is for a physical ESP32-class device connected to a real temperatu
 
 ## Registration
 
-The contributor first authenticates through Nimiq Pay, then registers the sensor’s 32-byte Ed25519 public key, hardware model, firmware version, and calibration status at `POST /api/sensors/register`. The private key remains on the sensor device.
+The contributor first authenticates through Nimiq Pay. The Mini App sends the sensor’s 64-hex-character Ed25519 public key, hardware model, firmware version, and calibration status to `POST /api/sensors/registration-challenge`. The contributor signs the returned binding message with the authenticated Nimiq wallet, then submits the unchanged metadata plus `registrationChallengeId`, `walletPublicKey`, and `walletSignature` to `POST /api/sensors/register`. This makes later metadata changes detectable and binds the sensor operator to the same wallet session. The Ed25519 private key remains on the physical sensor and must never be pasted into the app.
+
+Allowed calibration values are `manufacturer-specified`, `field-checked`, and `uncalibrated`. They are disclosures, not claims that Dwellence independently calibrated the device.
 
 ## Challenge and reading
 

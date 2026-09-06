@@ -49,3 +49,12 @@ export function verifyNimiqWalletSignature(message, signatureHex, publicKeyHex, 
     return false
   }
 }
+
+export function isValidNimiqAddress(address) {
+  try {
+    Nimiq.Address.fromUserFriendlyAddress(String(address))
+    return true
+  } catch {
+    return false
+  }
+}

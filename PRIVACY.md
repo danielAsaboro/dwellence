@@ -19,7 +19,7 @@ The purchasing wallet can access the full private report. The invited contributo
 
 ## Retention and control
 
-For the early-access test, operators must delete rejected diagnostic payloads within 7 days, precise property locations within 30 days after report unlock, accepted raw evidence and private reports within 90 days, and minimized security logs within 30 days. These operational deletions must be verified on the deployed datastore before public testing. Participants may request earlier deletion from the repository owner, subject to retaining the minimum record required to resolve an active payment or security incident.
+The server runs retention enforcement on startup and every 24 hours. It purges expired sessions and nonces, replaces encrypted precise property and measurement locations with a generalized marker after 30 days, and deletes accepted raw evidence and private reports after 90 days. Operators must still verify the job against the deployed persistent datastore before public testing and document deletion of rejected diagnostics and minimized operational logs outside the application database within 30 days. Participants may request earlier deletion from the repository owner, subject to retaining the minimum record required to resolve an active payment or security incident.
 
 ## Limits
 

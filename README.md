@@ -7,15 +7,16 @@ This repository is the public product code. It does not claim that a signature p
 ## What is implemented locally
 
 - Nimiq Pay wallet authentication with address-to-public-key verification through `@nimiq/core`.
-- SQLite-backed, expiring, one-use server nonces and short-lived sessions.
+- SQLite-backed, expiring, one-use server nonces, short-lived sessions, and persistent wallet/network/probe rate limits.
 - Encrypted-at-rest precise request locations; only a coarse cell is stored separately.
 - Invitation-only request acceptance by the designated contributor.
-- Registered Ed25519 sensor keys, signed sensor challenges, signed temperature/humidity ingestion, plausibility bounds, and replay rejection.
+- Nimiq-wallet-signed ownership binding for physical sensor metadata and Ed25519 keys; signed sensor challenges, plausibility bounds, and replay rejection.
 - A real browser connectivity probe against a configured controlled endpoint; no local result is represented as accepted evidence.
 - Accuracy-aware location-tolerance checks with encrypted measurement coordinates and minimized device/network context.
 - A same-origin controlled download, upload, and latency probe with payload caps.
 - Privacy-safe scoring primitives and public-aggregate suppression until five independent contributor/device pairs across three days.
-- Sealed reports, opaque direct-payment intents, canonical Nimiq RPC transaction lookup, and idempotent wallet-gated unlocks.
+- Sealed reports, opaque direct-payment intents, bounded canonical-RPC polling, idempotent wallet-gated unlocks, and retry UX that never asks the user to pay twice.
+- Enforced startup/daily retention: expired security records are purged, precise locations are generalized after 30 days, and raw evidence/private reports are deleted after 90 days.
 - A single Docker deployment serving the compiled Mini App, verifier API, probe, and health endpoint.
 
 ## Not yet proven or enabled

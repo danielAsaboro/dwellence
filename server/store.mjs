@@ -35,6 +35,12 @@ export function createStore(filename) {
       expires_at INTEGER NOT NULL,
       created_at INTEGER NOT NULL
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS rate_limits (
+      key_digest TEXT NOT NULL,
+      window_bucket INTEGER NOT NULL,
+      count INTEGER NOT NULL,
+      PRIMARY KEY (key_digest, window_bucket)
+    ) STRICT;
     CREATE TABLE IF NOT EXISTS requests (
       id TEXT PRIMARY KEY,
       seeker_address TEXT NOT NULL,
@@ -107,4 +113,46 @@ export function createStore(filename) {
   if (!connectivityColumns.includes('network_type')) db.exec('ALTER TABLE connectivity_measurements ADD COLUMN network_type TEXT')
   if (!connectivityColumns.includes('client_context')) db.exec('ALTER TABLE connectivity_measurements ADD COLUMN client_context TEXT')
   return db
+}
+
+export function runRetention(store, now = Date.now()) {
+  const day = 24 * 60 * 60 * 1000
+  const reportCutoff = now - 90 * day
+  const locationCutoff = now - 30 * day
+  let deletedReports = 0
+  let generalizedLocations = 0
+
+  store.exec('BEGIN IMMEDIATE')
+  try {
+    const expired = store.prepare(`
+      SELECT reports.id AS report_id, reports.request_id
+      FROM reports JOIN purchases ON purchases.report_id = reports.id
+      WHERE purchases.unlocked_at IS NOT NULL AND purchases.unlocked_at <= ?
+    `).all(reportCutoff)
+    for (const row of expired) {
+      store.prepare('DELETE FROM purchases WHERE report_id = ?').run(row.report_id)
+      store.prepare('DELETE FROM reports WHERE id = ?').run(row.report_id)
+      store.prepare('DELETE FROM connectivity_measurements WHERE request_id = ?').run(row.request_id)
+      store.prepare('DELETE FROM sensor_readings WHERE request_id = ?').run(row.request_id)
+      store.prepare('DELETE FROM requests WHERE id = ?').run(row.request_id)
+      deletedReports += 1
+    }
+    const generalized = store.prepare(`
+      UPDATE requests SET location_ciphertext = 'generalized-after-retention-window'
+      WHERE location_ciphertext != 'generalized-after-retention-window'
+        AND id IN (
+          SELECT reports.request_id FROM reports
+          JOIN purchases ON purchases.report_id = reports.id
+          WHERE purchases.unlocked_at IS NOT NULL AND purchases.unlocked_at <= ?
+        )
+    `).run(locationCutoff)
+    generalizedLocations = generalized.changes
+    store.prepare('DELETE FROM sessions WHERE expires_at < ?').run(now)
+    store.prepare('DELETE FROM nonces WHERE expires_at < ?').run(now)
+    store.exec('COMMIT')
+  } catch (error) {
+    store.exec('ROLLBACK')
+    throw error
+  }
+  return { generalizedLocations, deletedReports }
 }

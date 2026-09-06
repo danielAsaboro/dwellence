@@ -82,6 +82,19 @@ describe('private request API', () => {
     })
   })
 
+  it('rate limits repeated wallet challenge requests without claiming person uniqueness', async () => {
+    await withApi(async (url) => {
+      const keyPair = Nimiq.KeyPair.generate()
+      const address = keyPair.publicKey.toAddress().toUserFriendlyAddress()
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        expect((await json(url, '/api/auth/challenge', { method: 'POST', body: JSON.stringify({ role: 'seeker', address }) })).status).toBe(201)
+      }
+      const limited = await json(url, '/api/auth/challenge', { method: 'POST', body: JSON.stringify({ role: 'seeker', address }) })
+      expect(limited.status).toBe(429)
+      expect(limited.body.code).toBe('RATE_LIMITED')
+    })
+  })
+
   it('rejects request creation without an authenticated seeker session', async () => {
     await withApi(async (url) => {
       const result = await json(url, '/api/requests', { method: 'POST', body: '{}' })
@@ -97,6 +110,34 @@ describe('private request API', () => {
       const unsigned = await json(url, '/api/requests', { method: 'POST', headers: { authorization: `Bearer ${seeker.token}` }, body: JSON.stringify(draft) })
       expect(unsigned.status).toBe(401)
       expect(unsigned.body.code).toBe('REQUEST_SIGNATURE_REQUIRED')
+    })
+  })
+
+  it('rejects a signed request with a malformed invited Nimiq address', async () => {
+    await withApi(async (url) => {
+      const seeker = await authenticate(url, 'seeker')
+      const result = await createSignedRequest(url, seeker, { location: { latitude: 6.5, longitude: 3.3 }, invitedContributor: 'NQTHISISNOTAVALIDADDRESS', windowStartsAt: Date.now(), windowEndsAt: Date.now() + 60_000, priceLuna: 1000 })
+      expect(result.status).toBe(400)
+      expect(result.body.code).toBe('INVALID_REQUEST')
+    })
+  })
+
+  it('rejects signed requests whose precise coordinates are outside Earth bounds', async () => {
+    await withApi(async (url) => {
+      const seeker = await authenticate(url, 'seeker')
+      const contributor = await authenticate(url, 'contributor')
+      const result = await createSignedRequest(url, seeker, { location: { latitude: 91, longitude: 3.3 }, invitedContributor: contributor.address, windowStartsAt: Date.now(), windowEndsAt: Date.now() + 60_000, priceLuna: 1000 })
+      expect(result.status).toBe(400)
+      expect(result.body.code).toBe('INVALID_REQUEST')
+    })
+  })
+
+  it('rejects malformed sensor public-key hex before issuing a binding challenge', async () => {
+    await withApi(async (url) => {
+      const contributor = await authenticate(url, 'contributor')
+      const result = await json(url, '/api/sensors/registration-challenge', { method: 'POST', headers: { authorization: `Bearer ${contributor.token}` }, body: JSON.stringify({ publicKey: 'zz'.repeat(32), model: 'ESP32', firmware: '1.0.0', calibrationStatus: 'field-checked' }) })
+      expect(result.status).toBe(400)
+      expect(result.body.code).toBe('INVALID_SENSOR_REGISTRATION')
     })
   })
 

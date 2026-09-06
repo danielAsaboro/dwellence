@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
-import { consumeNonce, issueNonce, sha256, verifyEd25519Signature, verifyNimiqWalletSignature } from './security.mjs'
+import { consumeNonce, isValidNimiqAddress, issueNonce, sha256, verifyEd25519Signature, verifyNimiqWalletSignature } from './security.mjs'
 import { createServer } from 'node:http'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { extname, resolve, sep } from 'node:path'
@@ -80,6 +80,10 @@ function publicCell(latitude, longitude) {
   return `${Number(latitude).toFixed(2)},${Number(longitude).toFixed(2)}`
 }
 
+function validCoordinates(location) {
+  return Number.isFinite(location?.latitude) && Number.isFinite(location?.longitude) && location.latitude >= -90 && location.latitude <= 90 && location.longitude >= -180 && location.longitude <= 180
+}
+
 function sensorMessage(reading) {
   return `${reading.requestId}\n${reading.nonce}\n${reading.timestamp}\n${reading.temperatureC}\n${reading.humidityPercent}`
 }
@@ -103,6 +107,14 @@ function requestSignatureMessage(walletAddress, digest, challengeId, expiresAt) 
   return `Dwellence private request\nSeeker: ${walletAddress}\nRequest digest: ${digest}\nNonce: ${challengeId}\nExpires: ${new Date(expiresAt).toISOString()}`
 }
 
+function sensorBindingDigest({ publicKey, model, firmware, calibrationStatus }) {
+  return sha256(JSON.stringify({ publicKey: String(publicKey).toLowerCase(), model: String(model).trim(), firmware: String(firmware).trim(), calibrationStatus: String(calibrationStatus).trim() }))
+}
+
+function sensorBindingMessage(walletAddress, digest, challengeId, expiresAt) {
+  return `Dwellence sensor ownership binding\nOperator: ${walletAddress}\nSensor metadata digest: ${digest}\nNonce: ${challengeId}\nExpires: ${new Date(expiresAt).toISOString()}\nThis signature binds the sensor key to this wallet; it does not certify placement or calibration.`
+}
+
 function calculateConnectivityScore(reading) {
   const download = Math.max(0, Math.min(100, reading.download_mbps))
   const upload = Math.max(0, Math.min(100, reading.upload_mbps * 2))
@@ -121,6 +133,18 @@ function median(values) {
   const sorted = [...values].sort((left, right) => left - right)
   const middle = Math.floor(sorted.length / 2)
   return sorted.length % 2 ? sorted[middle] : Math.round((sorted[middle - 1] + sorted[middle]) / 2)
+}
+
+function withinRateLimit(store, key, limit, windowMs) {
+  const bucket = Math.floor(Date.now() / windowMs)
+  const keyDigest = sha256(key)
+  const result = store.prepare(`
+    INSERT INTO rate_limits (key_digest, window_bucket, count) VALUES (?, ?, 1)
+    ON CONFLICT(key_digest, window_bucket) DO UPDATE SET count = count + 1
+    RETURNING count
+  `).get(keyDigest, bucket)
+  store.prepare('DELETE FROM rate_limits WHERE key_digest = ? AND window_bucket < ?').run(keyDigest, bucket - 2)
+  return result.count <= limit
 }
 
 export function createApp({ store, locationEncryptionKey, allowedOrigins = [], nimiqRpcUrl = process.env.NIMIQ_RPC_URL, transactionLookup = null, staticDirectory = null }) {
@@ -145,21 +169,27 @@ export function createApp({ store, locationEncryptionKey, allowedOrigins = [], n
       const url = new URL(request.url, 'http://local')
       if (request.method === 'GET' && url.pathname === '/healthz') return send(response, 200, { status: 'ok' })
       if (request.method === 'GET' && url.pathname === '/probe/download') {
+        if (!withinRateLimit(store, `probe:${request.socket.remoteAddress ?? 'unknown'}`, 120, 60_000)) return send(response, 429, { code: 'RATE_LIMITED' })
         const bytes = Number(url.searchParams.get('bytes'))
         if (!Number.isInteger(bytes) || bytes < 1 || bytes > 1024 * 1024) return send(response, 400, { code: 'INVALID_PROBE_SIZE' })
         response.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': String(bytes), 'cache-control': 'no-store' })
         return response.end(randomBytes(bytes))
       }
       if (request.method === 'POST' && url.pathname === '/probe/upload') {
+        if (!withinRateLimit(store, `probe:${request.socket.remoteAddress ?? 'unknown'}`, 120, 60_000)) return send(response, 429, { code: 'RATE_LIMITED' })
         await consumeBody(request)
         return sendEmpty(response, 204)
       }
-      if (request.method === 'GET' && url.pathname === '/probe/ping') return sendEmpty(response, 204)
+      if (request.method === 'GET' && url.pathname === '/probe/ping') {
+        if (!withinRateLimit(store, `probe:${request.socket.remoteAddress ?? 'unknown'}`, 120, 60_000)) return send(response, 429, { code: 'RATE_LIMITED' })
+        return sendEmpty(response, 204)
+      }
 
       if (request.method === 'POST' && url.pathname === '/api/auth/challenge') {
         const { role, address } = await readJson(request)
-        if (!['seeker', 'contributor'].includes(role) || !String(address).startsWith('NQ')) return send(response, 400, { code: 'INVALID_AUTH_REQUEST' })
+        if (!['seeker', 'contributor'].includes(role) || !isValidNimiqAddress(address)) return send(response, 400, { code: 'INVALID_AUTH_REQUEST' })
         const walletAddress = canonicalAddress(address)
+        if (!withinRateLimit(store, `auth-wallet:${walletAddress}`, 20, 5 * 60_000) || !withinRateLimit(store, `auth-network:${request.socket.remoteAddress ?? 'unknown'}`, 60, 5 * 60_000)) return send(response, 429, { code: 'RATE_LIMITED' })
         const challengeId = opaqueId('auth')
         const expiresAt = Date.now() + 5 * 60_000
         const binding = JSON.stringify({ role, walletAddress, challengeId, expiresAt })
@@ -199,7 +229,7 @@ export function createApp({ store, locationEncryptionKey, allowedOrigins = [], n
         if (!session) return send(response, 401, { code: 'SEEKER_AUTH_REQUIRED' })
         const { location, invitedContributor, windowStartsAt, windowEndsAt, priceLuna, requestChallengeId, publicKey, signature } = await readJson(request)
         if (!requestChallengeId || !publicKey || !signature) return send(response, 401, { code: 'REQUEST_SIGNATURE_REQUIRED' })
-        if (!location || !Number.isFinite(location.latitude) || !Number.isFinite(location.longitude) || !String(invitedContributor).startsWith('NQ') || !Number.isInteger(priceLuna) || priceLuna <= 0 || !Number.isFinite(windowStartsAt) || !Number.isFinite(windowEndsAt) || windowEndsAt <= windowStartsAt) return send(response, 400, { code: 'INVALID_REQUEST' })
+        if (!validCoordinates(location) || !isValidNimiqAddress(invitedContributor) || !Number.isInteger(priceLuna) || priceLuna <= 0 || !Number.isFinite(windowStartsAt) || !Number.isFinite(windowEndsAt) || windowEndsAt <= windowStartsAt) return send(response, 400, { code: 'INVALID_REQUEST' })
         const digest = requestDigest({ location, invitedContributor, windowStartsAt, windowEndsAt, priceLuna })
         const nonce = store.prepare("SELECT expires_at FROM nonces WHERE digest = ? AND purpose = 'request-signature' AND binding = ? AND consumed_at IS NULL").get(sha256(requestChallengeId), `${session.wallet_address}:${digest}`)
         if (!nonce || !verifyNimiqWalletSignature(requestSignatureMessage(session.wallet_address, digest, requestChallengeId, nonce.expires_at), signature, publicKey, session.wallet_address)) return send(response, 401, { code: 'REQUEST_SIGNATURE_INVALID' })
@@ -235,12 +265,31 @@ export function createApp({ store, locationEncryptionKey, allowedOrigins = [], n
         return send(response, 200, { id: cancelMatch[1], status: 'cancelled' })
       }
 
+      if (request.method === 'POST' && url.pathname === '/api/sensors/registration-challenge') {
+        const session = requireSession(request, store, 'contributor')
+        if (!session) return send(response, 401, { code: 'CONTRIBUTOR_AUTH_REQUIRED' })
+        const metadata = await readJson(request)
+        const key = Buffer.from(String(metadata.publicKey), 'hex')
+        if (key.length !== 32 || !String(metadata.model).trim() || !String(metadata.firmware).trim() || !['manufacturer-specified', 'field-checked', 'uncalibrated'].includes(String(metadata.calibrationStatus))) return send(response, 400, { code: 'INVALID_SENSOR_REGISTRATION' })
+        const digest = sensorBindingDigest(metadata)
+        const challengeId = opaqueId('sensor_binding')
+        issueNonce(store, 'sensor-binding', `${session.wallet_address}:${digest}`, 300, challengeId)
+        const expiresAt = store.prepare('SELECT expires_at FROM nonces WHERE digest = ?').get(sha256(challengeId)).expires_at
+        return send(response, 201, { challengeId, message: sensorBindingMessage(session.wallet_address, digest, challengeId, expiresAt), expiresAt })
+      }
+
       if (request.method === 'POST' && url.pathname === '/api/sensors/register') {
         const session = requireSession(request, store, 'contributor')
         if (!session) return send(response, 401, { code: 'CONTRIBUTOR_AUTH_REQUIRED' })
-        const { publicKey, model, firmware, calibrationStatus } = await readJson(request)
+        const { publicKey, model, firmware, calibrationStatus, registrationChallengeId, walletPublicKey, walletSignature } = await readJson(request)
+        if (!registrationChallengeId || !walletPublicKey || !walletSignature) return send(response, 401, { code: 'SENSOR_BINDING_SIGNATURE_REQUIRED' })
         const key = Buffer.from(String(publicKey), 'hex')
-        if (key.length !== 32 || !String(model).trim() || !String(firmware).trim() || !String(calibrationStatus).trim()) return send(response, 400, { code: 'INVALID_SENSOR_REGISTRATION' })
+        if (key.length !== 32 || !String(model).trim() || !String(firmware).trim() || !['manufacturer-specified', 'field-checked', 'uncalibrated'].includes(String(calibrationStatus))) return send(response, 400, { code: 'INVALID_SENSOR_REGISTRATION' })
+        const digest = sensorBindingDigest({ publicKey, model, firmware, calibrationStatus })
+        const binding = `${session.wallet_address}:${digest}`
+        const nonce = store.prepare("SELECT expires_at FROM nonces WHERE digest = ? AND purpose = 'sensor-binding' AND binding = ? AND consumed_at IS NULL").get(sha256(registrationChallengeId), binding)
+        if (!nonce || !verifyNimiqWalletSignature(sensorBindingMessage(session.wallet_address, digest, registrationChallengeId, nonce.expires_at), walletSignature, walletPublicKey, session.wallet_address)) return send(response, 401, { code: 'SENSOR_BINDING_SIGNATURE_INVALID' })
+        if (!consumeNonce(store, registrationChallengeId, 'sensor-binding', binding)) return send(response, 409, { code: 'SENSOR_BINDING_SIGNATURE_USED_OR_EXPIRED' })
         const id = opaqueId('sensor')
         try {
           store.prepare('INSERT INTO sensors (id, operator_address, public_key, model, firmware, calibration_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, session.wallet_address, key, model.trim(), firmware.trim(), calibrationStatus.trim(), Date.now())
@@ -296,7 +345,7 @@ export function createApp({ store, locationEncryptionKey, allowedOrigins = [], n
         const session = requireSession(request, store, 'contributor')
         if (!session) return send(response, 401, { code: 'CONTRIBUTOR_AUTH_REQUIRED' })
         const reading = await readJson(request)
-        if (!String(reading.endpoint).startsWith('https://') || !String(reading.nonce) || !Number.isFinite(reading.downloadMbps) || !Number.isFinite(reading.uploadMbps) || !Number.isFinite(reading.latencyMs) || !Number.isFinite(reading.jitterMs) || !Number.isFinite(reading.measuredAt) || !Number.isFinite(reading.location?.latitude) || !Number.isFinite(reading.location?.longitude) || !Number.isFinite(reading.location?.accuracyMeters) || !String(reading.context?.networkType).trim() || !String(reading.context?.userAgentClass).trim()) return send(response, 400, { code: 'INVALID_CONNECTIVITY_READING' })
+        if (!String(reading.endpoint).startsWith('https://') || !String(reading.nonce) || !Number.isFinite(reading.downloadMbps) || !Number.isFinite(reading.uploadMbps) || !Number.isFinite(reading.latencyMs) || !Number.isFinite(reading.jitterMs) || !Number.isFinite(reading.measuredAt) || !validCoordinates(reading.location) || !Number.isFinite(reading.location?.accuracyMeters) || !String(reading.context?.networkType).trim() || !String(reading.context?.userAgentClass).trim()) return send(response, 400, { code: 'INVALID_CONNECTIVITY_READING' })
         const mission = store.prepare("SELECT id, location_ciphertext FROM requests WHERE id = ? AND accepted_by = ? AND status = 'accepted' AND window_starts_at <= ? AND window_ends_at >= ?").get(connectivityMatch[1], session.wallet_address, reading.measuredAt, reading.measuredAt)
         if (!mission) return send(response, 422, { code: 'READING_NOT_BOUND_TO_ACTIVE_REQUEST' })
         if (reading.location.accuracyMeters < 0 || reading.location.accuracyMeters > 500) return send(response, 422, { code: 'LOCATION_CONFIDENCE_INSUFFICIENT' })
@@ -345,7 +394,7 @@ export function createApp({ store, locationEncryptionKey, allowedOrigins = [], n
         const report = store.prepare("SELECT id, seeker_address, contributor_address, price_luna FROM reports WHERE id = ? AND seeker_address = ? AND status = 'awaiting_payment'").get(purchaseIntentMatch[1], session.wallet_address)
         if (!report) return send(response, 404, { code: 'PAYABLE_REPORT_NOT_FOUND' })
         const existing = store.prepare('SELECT id, reference, expected_luna, contributor_address, state FROM purchases WHERE report_id = ?').get(report.id)
-        if (existing) return send(response, 200, existing)
+        if (existing) return send(response, 200, { id: existing.id, reference: existing.reference, recipient: existing.contributor_address, valueLuna: existing.expected_luna, state: existing.state })
         const purchase = { id: opaqueId('purchase'), reference: `rep:${sha256(opaqueId('reference')).slice(0, 32)}` }
         store.prepare('INSERT INTO purchases (id, report_id, seeker_address, contributor_address, expected_luna, reference, state) VALUES (?, ?, ?, ?, ?, ?, ?)').run(purchase.id, report.id, session.wallet_address, report.contributor_address, report.price_luna, purchase.reference, 'not_started')
         return send(response, 201, { ...purchase, recipient: report.contributor_address, valueLuna: report.price_luna, state: 'not_started' })
@@ -358,7 +407,7 @@ export function createApp({ store, locationEncryptionKey, allowedOrigins = [], n
         const purchase = store.prepare('SELECT purchases.*, reports.id AS report_id FROM purchases JOIN reports ON reports.id = purchases.report_id WHERE purchases.id = ? AND purchases.seeker_address = ?').get(purchaseVerifyMatch[1], session.wallet_address)
         if (!purchase) return send(response, 404, { code: 'PURCHASE_NOT_FOUND' })
         const { transactionHash } = await readJson(request)
-        if (!/^[0-9a-f]{32,}$/i.test(String(transactionHash))) return send(response, 400, { code: 'INVALID_TRANSACTION_HASH' })
+        if (!/^[0-9a-f]{64}$/i.test(String(transactionHash))) return send(response, 400, { code: 'INVALID_TRANSACTION_HASH' })
         if (!nimiqRpcUrl && !transactionLookup) return send(response, 503, { code: 'NIMIQ_RPC_NOT_CONFIGURED' })
         let transaction
         try { transaction = transactionLookup ? await transactionLookup(transactionHash) : await lookupIncludedTransaction(nimiqRpcUrl, transactionHash) } catch { return send(response, 503, { code: 'NIMIQ_RPC_UNAVAILABLE' }) }

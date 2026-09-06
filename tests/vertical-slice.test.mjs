@@ -19,6 +19,10 @@ async function createSignedRequest(base, seeker, draft) {
   const challenge = await json(base, '/api/requests/challenge', { method: 'POST', headers: bearer(seeker.token), body: JSON.stringify(draft) })
   return json(base, '/api/requests', { method: 'POST', headers: bearer(seeker.token), body: JSON.stringify({ ...draft, requestChallengeId: challenge.body.challengeId, publicKey: seeker.key.publicKey.toHex(), signature: seeker.key.sign(new TextEncoder().encode(challenge.body.message)).toHex() }) })
 }
+async function registerSensor(base, contributor, metadata) {
+  const challenge = await json(base, '/api/sensors/registration-challenge', { method: 'POST', headers: bearer(contributor.token), body: JSON.stringify(metadata) })
+  return json(base, '/api/sensors/register', { method: 'POST', headers: bearer(contributor.token), body: JSON.stringify({ ...metadata, registrationChallengeId: challenge.body.challengeId, walletPublicKey: contributor.key.publicKey.toHex(), walletSignature: contributor.key.sign(new TextEncoder().encode(challenge.body.message)).toHex() }) })
+}
 
 describe('private request to independently verified report unlock', () => {
   it('requires accepted real-form evidence before a canonical payment transaction unlocks the report', async () => {
@@ -30,7 +34,7 @@ describe('private request to independently verified report unlock', () => {
       const seeker = await auth(base, 'seeker'); const contributor = await auth(base, 'contributor')
       const request = await createSignedRequest(base, seeker, { location: { latitude: 6.5, longitude: 3.3 }, invitedContributor: contributor.address, windowStartsAt: Date.now() - 1_000, windowEndsAt: Date.now() + 60_000, priceLuna: 1000 })
       await json(base, `/api/invitations/${request.body.shareCode}/accept`, { method: 'POST', headers: bearer(contributor.token), body: '{}' })
-      const { privateKey, publicKey } = generateKeyPairSync('ed25519'); const sensor = await json(base, '/api/sensors/register', { method: 'POST', headers: bearer(contributor.token), body: JSON.stringify({ publicKey: publicKey.export({ format: 'der', type: 'spki' }).subarray(-32).toString('hex'), model: 'BME280', firmware: '1.0.0', calibrationStatus: 'manufacturer-specified' }) })
+      const { privateKey, publicKey } = generateKeyPairSync('ed25519'); const sensor = await registerSensor(base, contributor, { publicKey: publicKey.export({ format: 'der', type: 'spki' }).subarray(-32).toString('hex'), model: 'BME280', firmware: '1.0.0', calibrationStatus: 'manufacturer-specified' })
       const sensorNonce = await json(base, `/api/sensors/${sensor.body.id}/challenge`, { method: 'POST', headers: bearer(contributor.token), body: '{}' }); const timestamp = Date.now(); const sensorMessage = `${request.body.id}\n${sensorNonce.body.nonce}\n${timestamp}\n24\n50`
       expect((await json(base, `/api/sensors/${sensor.body.id}/readings`, { method: 'POST', body: JSON.stringify({ requestId: request.body.id, nonce: sensorNonce.body.nonce, timestamp, temperatureC: 24, humidityPercent: 50, signature: sign(null, Buffer.from(sensorMessage), privateKey).toString('hex') }) })).status).toBe(201)
       const connectivityNonce = await json(base, `/api/requests/${request.body.id}/measurement-challenge`, { method: 'POST', headers: bearer(contributor.token), body: '{}' })
@@ -49,8 +53,15 @@ describe('private request to independently verified report unlock', () => {
       expect(aggregate.body.thresholds).toEqual({ contributorDevicePairs: 5, distinctDays: 3 })
       const preview = await json(base, `/api/reports/${report.body.reportId}/preview`, { headers: bearer(seeker.token) }); expect(preview.status).toBe(200)
       const intent = await json(base, `/api/reports/${report.body.reportId}/purchase-intent`, { method: 'POST', headers: bearer(seeker.token), body: '{}' }); expectedPayment = { recipient: intent.body.recipient, valueLuna: intent.body.valueLuna, reference: intent.body.reference }
+      const resumedIntent = await json(base, `/api/reports/${report.body.reportId}/purchase-intent`, { method: 'POST', headers: bearer(seeker.token), body: '{}' })
+      expect(resumedIntent.body).toEqual({ ...intent.body, state: 'not_started' })
       const payment = await json(base, `/api/purchases/${intent.body.id}/verify`, { method: 'POST', headers: bearer(seeker.token), body: JSON.stringify({ transactionHash: 'a'.repeat(64) }) }); expect(payment.body.state).toBe('included')
       const unlocked = await json(base, `/api/reports/${report.body.reportId}`, { headers: bearer(seeker.token) }); expect(unlocked.status).toBe(200); expect(unlocked.body.report.connectivity.categoryScore).toBeTypeOf('number')
+      const outsider = await auth(base, 'seeker')
+      expect((await json(base, `/api/reports/${report.body.reportId}`, { headers: bearer(outsider.token) })).status).toBe(404)
+      const unlockedAt = store.prepare('SELECT unlocked_at FROM purchases WHERE id = ?').get(intent.body.id).unlocked_at
+      expect((await json(base, `/api/purchases/${intent.body.id}/verify`, { method: 'POST', headers: bearer(seeker.token), body: JSON.stringify({ transactionHash: 'a'.repeat(64) }) })).body.state).toBe('included')
+      expect(store.prepare('SELECT unlocked_at FROM purchases WHERE id = ?').get(intent.body.id).unlocked_at).toBe(unlockedAt)
     } finally { await new Promise((resolve) => app.close(resolve)) }
   })
 })
