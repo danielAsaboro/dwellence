@@ -12,8 +12,11 @@ This repository is the public product code. It does not claim that a signature p
 - Invitation-only request acceptance by the designated contributor.
 - Registered Ed25519 sensor keys, signed sensor challenges, signed temperature/humidity ingestion, plausibility bounds, and replay rejection.
 - A real browser connectivity probe against a configured controlled endpoint; no local result is represented as accepted evidence.
+- Accuracy-aware location-tolerance checks with encrypted measurement coordinates and minimized device/network context.
+- A same-origin controlled download, upload, and latency probe with payload caps.
 - Privacy-safe scoring primitives and public-aggregate suppression until five independent contributor/device pairs across three days.
 - Sealed reports, opaque direct-payment intents, canonical Nimiq RPC transaction lookup, and idempotent wallet-gated unlocks.
+- A single Docker deployment serving the compiled Mini App, verifier API, probe, and health endpoint.
 
 ## Not yet proven or enabled
 
@@ -37,21 +40,36 @@ Start the verifier only after setting a unique server-only encryption secret:
 ```sh
 export LOCATION_ENCRYPTION_KEY='a-unique-secret-at-least-24-characters-long'
 export ALLOWED_ORIGINS='http://127.0.0.1:5173'
-export NIMIQ_RPC_URL='https://YOUR-TESTNET-NIMIQ-RPC'
+export NIMIQ_RPC_URL='https://YOUR-VERIFIED-TESTNET-NIMIQ-RPC'
 npm run server
 ```
 
 Start the Mini App in a separate terminal:
 
 ```sh
-VITE_API_URL='http://YOUR-LAN-IP:8787' VITE_PROBE_URL='https://YOUR-CONTROLLED-PROBE' npm run dev -- --host
+VITE_API_URL='http://YOUR-LAN-IP:8787' VITE_PROBE_URL='http://YOUR-LAN-IP:8787/probe' npm run dev -- --host
 ```
 
 Load the network URL from Nimiq Pay on a phone connected to the same network. Use testnet and low-value accounts. Never enter a private key or recovery phrase into this app.
 
+## Production container
+
+Build and run the same-origin production image on an HTTPS host with a persistent volume mounted at `/data`:
+
+```sh
+docker build -t dwellence .
+docker run --rm -p 8787:8787 \
+  -e LOCATION_ENCRYPTION_KEY='a-unique-server-secret-at-least-24-characters' \
+  -e NIMIQ_RPC_URL='https://YOUR-VERIFIED-TESTNET-NIMIQ-RPC' \
+  -v dwellence-data:/data \
+  dwellence
+```
+
+The health check is `GET /healthz`. Do not deploy without HTTPS, persistent private storage, a unique encryption secret, and a testnet RPC endpoint verified against a known transaction.
+
 ## Evidence boundaries
 
-The report must keep exact addresses, coordinates, sensor readings, device handles, and full report contents off-chain. Direct NIM transaction data may contain only an opaque report-purchase reference. See [sensor protocol](docs/sensor-protocol.md) and the [physical proof runbook](docs/physical-proof-runbook.md) before a real test.
+The report must keep exact addresses, coordinates, sensor readings, device handles, and full report contents off-chain. Direct NIM transaction data may contain only an opaque report-purchase reference. Read the [privacy notice](PRIVACY.md), [security policy](SECURITY.md), [sensor protocol](docs/sensor-protocol.md), and [physical proof runbook](docs/physical-proof-runbook.md) before a real test.
 
 ## License
 
