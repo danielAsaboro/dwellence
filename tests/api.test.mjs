@@ -141,6 +141,17 @@ describe('private request API', () => {
     })
   })
 
+  it('rejects a request without supported required evidence categories', async () => {
+    await withApi(async (url) => {
+      const seeker = await authenticate(url, 'seeker')
+      const contributor = await authenticate(url, 'contributor')
+      const draft = { location: { latitude: 6.5, longitude: 3.3 }, invitedContributor: contributor.address, requiredCategories: [], windowStartsAt: Date.now(), windowEndsAt: Date.now() + 60_000, priceLuna: 1000 }
+      const result = await json(url, '/api/requests/challenge', { method: 'POST', headers: { authorization: `Bearer ${seeker.token}` }, body: JSON.stringify(draft) })
+      expect(result.status).toBe(400)
+      expect(result.body.code).toBe('INVALID_REQUEST')
+    })
+  })
+
   it('rejects malformed sensor public-key hex before issuing a binding challenge', async () => {
     await withApi(async (url) => {
       const contributor = await authenticate(url, 'contributor')

@@ -32,8 +32,9 @@ describe('private request to independently verified report unlock', () => {
     await new Promise((resolve) => app.listen(0, '127.0.0.1', resolve)); const base = `http://127.0.0.1:${app.address().port}`
     try {
       const seeker = await auth(base, 'seeker'); const contributor = await auth(base, 'contributor')
-      const request = await createSignedRequest(base, seeker, { location: { latitude: 6.5, longitude: 3.3 }, invitedContributor: contributor.address, windowStartsAt: Date.now() - 1_000, windowEndsAt: Date.now() + 60_000, priceLuna: 1000 })
-      await json(base, `/api/invitations/${request.body.shareCode}/accept`, { method: 'POST', headers: bearer(contributor.token), body: '{}' })
+      const request = await createSignedRequest(base, seeker, { location: { latitude: 6.5, longitude: 3.3 }, invitedContributor: contributor.address, requiredCategories: ['connectivity', 'environmental_comfort'], windowStartsAt: Date.now() - 1_000, windowEndsAt: Date.now() + 60_000, priceLuna: 1000 })
+      const acceptedRequest = await json(base, `/api/invitations/${request.body.shareCode}/accept`, { method: 'POST', headers: bearer(contributor.token), body: '{}' })
+      expect(acceptedRequest.body.requiredCategories).toEqual(['connectivity', 'environmental_comfort'])
       const { privateKey, publicKey } = generateKeyPairSync('ed25519'); const sensor = await registerSensor(base, contributor, { publicKey: publicKey.export({ format: 'der', type: 'spki' }).subarray(-32).toString('hex'), model: 'BME280', firmware: '1.0.0', calibrationStatus: 'manufacturer-specified' })
       const sensorNonce = await json(base, `/api/sensors/${sensor.body.id}/challenge`, { method: 'POST', headers: bearer(contributor.token), body: '{}' }); const timestamp = Date.now(); const sensorMessage = `${request.body.id}\n${sensorNonce.body.nonce}\n${timestamp}\n24\n50`
       expect((await json(base, `/api/sensors/${sensor.body.id}/readings`, { method: 'POST', body: JSON.stringify({ requestId: request.body.id, nonce: sensorNonce.body.nonce, timestamp, temperatureC: 24, humidityPercent: 50, signature: sign(null, Buffer.from(sensorMessage), privateKey).toString('hex') }) })).status).toBe(201)

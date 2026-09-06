@@ -10,6 +10,7 @@ This repository is the public product code. It does not claim that a signature p
 - SQLite-backed, expiring, one-use server nonces, short-lived sessions, and persistent wallet/network/probe rate limits.
 - Encrypted-at-rest precise request locations; only a coarse cell is stored separately.
 - Invitation-only request acceptance by the designated contributor.
+- Seeker-signed measurement windows and explicit required categories; connectivity remains mandatory for location validation, while missing unrequested categories are excluded rather than assigned a default score.
 - Nimiq-wallet-signed ownership binding for physical sensor metadata and Ed25519 keys; signed sensor challenges, plausibility bounds, and replay rejection.
 - A real browser connectivity probe against a configured controlled endpoint; no local result is represented as accepted evidence.
 - Accuracy-aware location-tolerance checks with encrypted measurement coordinates and minimized device/network context.

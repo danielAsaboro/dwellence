@@ -6,7 +6,7 @@ describe('recoverable API errors', () => {
     ['RATE_LIMITED', 'Wait a few minutes'],
     ['REQUEST_EXPIRED', 'Ask the seeker for a new invitation'],
     ['LOCATION_CONFIDENCE_INSUFFICIENT', 'Move where your phone has a clearer location signal'],
-    ['REQUIRED_EVIDENCE_MISSING', 'both the connectivity probe and physical sensor reading'],
+    ['REQUIRED_EVIDENCE_MISSING', 'every evidence category listed in the commissioned request'],
     ['NIMIQ_RPC_UNAVAILABLE', 'Retry verification'],
     ['PRIVATE_REPORT_NOT_UNLOCKED', 'confirmed payment'],
   ])('turns %s into an actionable message', (code, expected) => {

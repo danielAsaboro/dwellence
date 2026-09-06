@@ -34,7 +34,7 @@ const MESSAGES: Record<string, string> = {
   CONNECTIVITY_NONCE_USED_OR_EXPIRED: 'The connectivity session expired or was already submitted. Start a fresh measurement.',
   CONNECTIVITY_READING_IMPLAUSIBLE_OR_STALE: 'The connectivity result is stale or outside accepted bounds. Run the probe again.',
   CONNECTIVITY_PAYLOAD_REPLAYED: 'This connectivity payload was already submitted. Run a fresh measurement.',
-  REQUIRED_EVIDENCE_MISSING: 'Complete both the connectivity probe and physical sensor reading before sealing the report.',
+  REQUIRED_EVIDENCE_MISSING: 'Complete every evidence category listed in the commissioned request before sealing the report.',
   REPORT_ALREADY_GENERATED: 'A sealed report already exists for this request. Use its report ID.',
   PRIVATE_REPORT_NOT_FOUND: 'This report does not belong to the connected seeker wallet.',
   PAYABLE_REPORT_NOT_FOUND: 'This report is not awaiting payment or does not belong to this wallet.',

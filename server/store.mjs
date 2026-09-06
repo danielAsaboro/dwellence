@@ -56,6 +56,7 @@ export function createStore(filename) {
       window_starts_at INTEGER NOT NULL,
       window_ends_at INTEGER NOT NULL,
       price_luna INTEGER NOT NULL,
+      required_categories_json TEXT NOT NULL DEFAULT '["connectivity","environmental_comfort"]',
       share_code TEXT NOT NULL UNIQUE,
       status TEXT NOT NULL,
       accepted_by TEXT,
@@ -125,6 +126,8 @@ export function createStore(filename) {
   if (!connectivityColumns.includes('location_accuracy_m')) db.exec('ALTER TABLE connectivity_measurements ADD COLUMN location_accuracy_m REAL')
   if (!connectivityColumns.includes('network_type')) db.exec('ALTER TABLE connectivity_measurements ADD COLUMN network_type TEXT')
   if (!connectivityColumns.includes('client_context')) db.exec('ALTER TABLE connectivity_measurements ADD COLUMN client_context TEXT')
+  const requestColumns = db.prepare('PRAGMA table_info(requests)').all().map((column) => column.name)
+  if (!requestColumns.includes('required_categories_json')) db.exec(`ALTER TABLE requests ADD COLUMN required_categories_json TEXT NOT NULL DEFAULT '["connectivity","environmental_comfort"]'`)
   return db
 }
 

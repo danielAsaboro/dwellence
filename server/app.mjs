@@ -85,6 +85,12 @@ function validCoordinates(location) {
   return Number.isFinite(location?.latitude) && Number.isFinite(location?.longitude) && location.latitude >= -90 && location.latitude <= 90 && location.longitude >= -180 && location.longitude <= 180
 }
 
+function normalizeRequiredCategories(categories) {
+  const value = categories === undefined ? ['connectivity', 'environmental_comfort'] : categories
+  if (!Array.isArray(value) || !value.includes('connectivity') || value.length > 2 || value.some((category) => !['connectivity', 'environmental_comfort'].includes(category)) || new Set(value).size !== value.length) return null
+  return [...value].sort()
+}
+
 function sensorMessage(reading) {
   return `${reading.requestId}\n${reading.nonce}\n${reading.timestamp}\n${reading.temperatureC}\n${reading.humidityPercent}`
 }
@@ -226,7 +232,9 @@ export function createApp({ store, locationEncryptionKey, allowedOrigins = [], n
         const session = requireSession(request, store, 'seeker')
         if (!session) return send(response, 401, { code: 'SEEKER_AUTH_REQUIRED' })
         const draft = await readJson(request)
-        const digest = requestDigest(draft)
+        const requiredCategories = normalizeRequiredCategories(draft.requiredCategories)
+        if (!requiredCategories) return send(response, 400, { code: 'INVALID_REQUEST' })
+        const digest = requestDigest({ ...draft, requiredCategories })
         const challengeId = opaqueId('request')
         issueNonce(store, 'request-signature', `${session.wallet_address}:${digest}`, 300, challengeId)
         const expiresAt = store.prepare("SELECT expires_at FROM nonces WHERE digest = ?").get(sha256(challengeId)).expires_at
@@ -236,17 +244,18 @@ export function createApp({ store, locationEncryptionKey, allowedOrigins = [], n
       if (request.method === 'POST' && url.pathname === '/api/requests') {
         const session = requireSession(request, store, 'seeker')
         if (!session) return send(response, 401, { code: 'SEEKER_AUTH_REQUIRED' })
-        const { location, invitedContributor, windowStartsAt, windowEndsAt, priceLuna, requestChallengeId, publicKey, signature } = await readJson(request)
+        const { location, invitedContributor, requiredCategories: requestedCategories, windowStartsAt, windowEndsAt, priceLuna, requestChallengeId, publicKey, signature } = await readJson(request)
+        const requiredCategories = normalizeRequiredCategories(requestedCategories)
         if (!requestChallengeId || !publicKey || !signature) return send(response, 401, { code: 'REQUEST_SIGNATURE_REQUIRED' })
-        if (!validCoordinates(location) || !isValidNimiqAddress(invitedContributor) || !Number.isInteger(priceLuna) || priceLuna <= 0 || !Number.isFinite(windowStartsAt) || !Number.isFinite(windowEndsAt) || windowEndsAt <= windowStartsAt) return send(response, 400, { code: 'INVALID_REQUEST' })
-        const digest = requestDigest({ location, invitedContributor, windowStartsAt, windowEndsAt, priceLuna })
+        if (!requiredCategories || !validCoordinates(location) || !isValidNimiqAddress(invitedContributor) || !Number.isInteger(priceLuna) || priceLuna <= 0 || !Number.isFinite(windowStartsAt) || !Number.isFinite(windowEndsAt) || windowEndsAt <= windowStartsAt) return send(response, 400, { code: 'INVALID_REQUEST' })
+        const digest = requestDigest({ location, invitedContributor, requiredCategories, windowStartsAt, windowEndsAt, priceLuna })
         const nonce = store.prepare("SELECT expires_at FROM nonces WHERE digest = ? AND purpose = 'request-signature' AND binding = ? AND consumed_at IS NULL").get(sha256(requestChallengeId), `${session.wallet_address}:${digest}`)
         if (!nonce || !verifyNimiqWalletSignature(requestSignatureMessage(session.wallet_address, digest, requestChallengeId, nonce.expires_at), signature, publicKey, session.wallet_address)) return send(response, 401, { code: 'REQUEST_SIGNATURE_INVALID' })
         if (!consumeNonce(store, requestChallengeId, 'request-signature', `${session.wallet_address}:${digest}`)) return send(response, 409, { code: 'REQUEST_SIGNATURE_USED_OR_EXPIRED' })
         const id = opaqueId('req')
         const shareCode = randomBytes(18).toString('base64url')
-        store.prepare('INSERT INTO requests (id, seeker_address, invited_contributor, location_ciphertext, public_cell, window_starts_at, window_ends_at, price_luna, share_code, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
-          id, session.wallet_address, canonicalAddress(invitedContributor), encryptLocation(location, locationEncryptionKey), publicCell(location.latitude, location.longitude), windowStartsAt, windowEndsAt, priceLuna, shareCode, 'shared', Date.now(),
+        store.prepare('INSERT INTO requests (id, seeker_address, invited_contributor, location_ciphertext, public_cell, window_starts_at, window_ends_at, price_luna, required_categories_json, share_code, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+          id, session.wallet_address, canonicalAddress(invitedContributor), encryptLocation(location, locationEncryptionKey), publicCell(location.latitude, location.longitude), windowStartsAt, windowEndsAt, priceLuna, JSON.stringify(requiredCategories), shareCode, 'shared', Date.now(),
         )
         return send(response, 201, { id, shareCode, status: 'shared' })
       }
@@ -255,14 +264,14 @@ export function createApp({ store, locationEncryptionKey, allowedOrigins = [], n
       if (request.method === 'POST' && acceptMatch) {
         const session = requireSession(request, store, 'contributor')
         if (!session) return send(response, 401, { code: 'CONTRIBUTOR_AUTH_REQUIRED' })
-        const invitation = store.prepare("SELECT id, public_cell, price_luna, window_starts_at, window_ends_at FROM requests WHERE share_code = ? AND invited_contributor = ? AND status = 'shared'").get(acceptMatch[1], session.wallet_address)
+        const invitation = store.prepare("SELECT id, public_cell, price_luna, required_categories_json, window_starts_at, window_ends_at FROM requests WHERE share_code = ? AND invited_contributor = ? AND status = 'shared'").get(acceptMatch[1], session.wallet_address)
         if (invitation && invitation.window_ends_at < Date.now()) {
           store.prepare("UPDATE requests SET status = 'expired' WHERE id = ? AND status = 'shared'").run(invitation.id)
           return send(response, 410, { code: 'REQUEST_EXPIRED' })
         }
         const updated = store.prepare("UPDATE requests SET accepted_by = ?, status = 'accepted' WHERE share_code = ? AND invited_contributor = ? AND status = 'shared' AND window_ends_at >= ?").run(session.wallet_address, acceptMatch[1], session.wallet_address, Date.now())
         if (updated.changes !== 1) return send(response, 409, { code: 'REQUEST_UNAVAILABLE' })
-        return send(response, 200, { id: invitation.id, status: 'accepted', approximateArea: invitation.public_cell, priceLuna: invitation.price_luna, windowStartsAt: invitation.window_starts_at, windowEndsAt: invitation.window_ends_at })
+        return send(response, 200, { id: invitation.id, status: 'accepted', approximateArea: invitation.public_cell, priceLuna: invitation.price_luna, requiredCategories: JSON.parse(invitation.required_categories_json), windowStartsAt: invitation.window_starts_at, windowEndsAt: invitation.window_ends_at })
       }
 
       const cancelMatch = url.pathname.match(/^\/api\/requests\/([^/]+)\/cancel$/)
@@ -389,20 +398,23 @@ export function createApp({ store, locationEncryptionKey, allowedOrigins = [], n
       if (request.method === 'POST' && submitMatch) {
         const session = requireSession(request, store, 'contributor')
         if (!session) return send(response, 401, { code: 'CONTRIBUTOR_AUTH_REQUIRED' })
-        const mission = store.prepare("SELECT id, seeker_address, accepted_by, price_luna, public_cell FROM requests WHERE id = ? AND accepted_by = ? AND status = 'accepted'").get(submitMatch[1], session.wallet_address)
+        const mission = store.prepare("SELECT id, seeker_address, accepted_by, price_luna, public_cell, required_categories_json FROM requests WHERE id = ? AND accepted_by = ? AND status = 'accepted'").get(submitMatch[1], session.wallet_address)
         if (!mission) return send(response, 404, { code: 'ACTIVE_ASSIGNMENT_NOT_FOUND' })
         const sensor = store.prepare('SELECT sensor_readings.*, sensors.model, sensors.firmware, sensors.calibration_status FROM sensor_readings JOIN sensors ON sensors.id = sensor_readings.sensor_id WHERE request_id = ? ORDER BY accepted_at DESC LIMIT 1').get(mission.id)
         const connectivity = store.prepare('SELECT * FROM connectivity_measurements WHERE request_id = ? ORDER BY accepted_at DESC LIMIT 1').get(mission.id)
         const observationRow = store.prepare('SELECT observation_json FROM contributor_observations WHERE request_id = ?').get(mission.id)
-        if (!sensor || !connectivity) return send(response, 422, { code: 'REQUIRED_EVIDENCE_MISSING' })
+        const requiredCategories = JSON.parse(mission.required_categories_json)
+        if ((requiredCategories.includes('environmental_comfort') && !sensor) || (requiredCategories.includes('connectivity') && !connectivity)) return send(response, 422, { code: 'REQUIRED_EVIDENCE_MISSING' })
         const reportId = opaqueId('report')
         const createdAt = Date.now()
-        const confidenceDimensions = { integrity: 'verified', freshness: 'within_window', spatial: 'within_tolerance', temporalCoverage: 'single_session', contributorIndependence: 'single_contributor', deviceQuality: sensor.calibration_status, contextualCompleteness: connectivity.network_type && connectivity.client_context ? 'recorded' : 'limited' }
-        const preview = { categories: ['connectivity', 'environmental_comfort'], evidenceCount: 2, measuredAt: Math.max(sensor.observed_at, connectivity.measured_at), confidence: 'low', confidenceDimensions, scorerVersion: 'mvp-1' }
-        const connectivityEvidence = { endpoint: connectivity.endpoint, downloadMbps: connectivity.download_mbps, uploadMbps: connectivity.upload_mbps, latencyMs: connectivity.latency_ms, jitterMs: connectivity.jitter_ms, networkType: connectivity.network_type, clientContext: connectivity.client_context, locationAccuracyMeters: connectivity.location_accuracy_m, sampleCount: 1, categoryScore: calculateConnectivityScore(connectivity) }
-        const comfortEvidence = { temperatureC: sensor.temperature_c, humidityPercent: sensor.humidity_percent, sensorModel: sensor.model, firmware: sensor.firmware, calibrationStatus: sensor.calibration_status, sampleCount: 1, categoryScore: calculateComfortScore(sensor) }
+        const measuredTimes = [sensor?.observed_at, connectivity?.measured_at].filter(Number.isFinite)
+        const confidenceDimensions = { integrity: 'verified', freshness: 'within_window', spatial: connectivity ? 'within_tolerance' : 'not_applicable', temporalCoverage: 'single_session', contributorIndependence: 'single_contributor', deviceQuality: sensor?.calibration_status ?? 'not_applicable', contextualCompleteness: connectivity?.network_type && connectivity?.client_context ? 'recorded' : 'limited' }
+        const preview = { categories: requiredCategories, excludedCategories: ['connectivity', 'environmental_comfort'].filter((category) => !requiredCategories.includes(category)), evidenceCount: requiredCategories.length, measuredAt: Math.max(...measuredTimes), confidence: 'low', confidenceDimensions, scorerVersion: 'mvp-1' }
+        const connectivityEvidence = connectivity ? { endpoint: connectivity.endpoint, downloadMbps: connectivity.download_mbps, uploadMbps: connectivity.upload_mbps, latencyMs: connectivity.latency_ms, jitterMs: connectivity.jitter_ms, networkType: connectivity.network_type, clientContext: connectivity.client_context, locationAccuracyMeters: connectivity.location_accuracy_m, sampleCount: 1, categoryScore: calculateConnectivityScore(connectivity) } : null
+        const comfortEvidence = sensor ? { temperatureC: sensor.temperature_c, humidityPercent: sensor.humidity_percent, sensorModel: sensor.model, firmware: sensor.firmware, calibrationStatus: sensor.calibration_status, sampleCount: 1, categoryScore: calculateComfortScore(sensor) } : null
         const defaultWeights = { connectivity: 50, environmentalComfort: 50 }
-        const report = { ...preview, areaCell: mission.public_cell, defaultWeights, locationEvidenceScore: Math.round((connectivityEvidence.categoryScore + comfortEvidence.categoryScore) / 2), limitations: ['Measurements reflect a specific time and endpoint context.', 'Signatures prove key origin, not physical placement or calibration.', 'This is not an inspection, appraisal, or habitability certification.'], connectivity: connectivityEvidence, environmentalComfort: comfortEvidence, contributorObservations: observationRow ? JSON.parse(observationRow.observation_json) : null }
+        const availableScores = [connectivityEvidence?.categoryScore, comfortEvidence?.categoryScore].filter(Number.isFinite)
+        const report = { ...preview, areaCell: mission.public_cell, defaultWeights, locationEvidenceScore: Math.round(availableScores.reduce((sum, score) => sum + score, 0) / availableScores.length), limitations: ['Measurements reflect a specific time and endpoint context.', 'Signatures prove key origin, not physical placement or calibration.', 'This is not an inspection, appraisal, or habitability certification.'], connectivity: connectivityEvidence, environmentalComfort: comfortEvidence, contributorObservations: observationRow ? JSON.parse(observationRow.observation_json) : null }
         try {
           store.prepare('INSERT INTO reports (id, request_id, seeker_address, contributor_address, price_luna, preview_json, report_json, scorer_version, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(reportId, mission.id, mission.seeker_address, mission.accepted_by, mission.price_luna, JSON.stringify(preview), JSON.stringify(report), 'mvp-1', 'awaiting_payment', createdAt)
           store.prepare("UPDATE requests SET status = 'awaiting_payment' WHERE id = ?").run(mission.id)

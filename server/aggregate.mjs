@@ -16,7 +16,7 @@ export function buildAreaAggregate(cell, rows, now = Date.now()) {
   for (const row of rows) {
     if (now - row.accepted_at > 90 * DAY) continue
     const report = JSON.parse(row.report_json)
-    if (!['low', 'medium', 'high'].includes(report.confidence)) continue
+    if (!['low', 'medium', 'high'].includes(report.confidence) || !report.connectivity || !report.environmentalComfort) continue
     const key = `${row.accepted_by}:${row.sensor_id}`
     if (!newestByPair.has(key)) newestByPair.set(key, { ...row, report })
   }
