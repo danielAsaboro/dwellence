@@ -54,6 +54,10 @@ const MESSAGES: Record<string, string> = {
     "Review the observation choices and provider names, then submit them again.",
   INVALID_CONNECTIVITY_READING:
     "The connectivity result or its location/context data is incomplete.",
+  PROBE_ENDPOINT_NOT_CONFIGURED:
+    "The controlled connectivity endpoint is not configured. The measurement was not accepted.",
+  PROBE_ENDPOINT_NOT_ALLOWED:
+    "This result came from an unapproved endpoint. Run the measurement using the configured Dwellence probe.",
   LOCATION_CONFIDENCE_INSUFFICIENT:
     "Move where your phone has a clearer location signal, then repeat the measurement.",
   LOCATION_OUTSIDE_REQUEST_TOLERANCE:

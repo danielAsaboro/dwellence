@@ -47,6 +47,7 @@ Start the verifier only after setting a unique server-only encryption secret:
 export LOCATION_ENCRYPTION_KEY='a-unique-secret-at-least-24-characters-long'
 export ALLOWED_ORIGINS='http://127.0.0.1:5173'
 export NIMIQ_RPC_URL='https://YOUR-VERIFIED-TESTNET-NIMIQ-RPC'
+export PROBE_PUBLIC_URL='https://YOUR-CONTROLLED-HOST/probe'
 npm run server
 ```
 
@@ -67,11 +68,12 @@ docker build -t dwellence .
 docker run --rm -p 8787:8787 \
   -e LOCATION_ENCRYPTION_KEY='a-unique-server-secret-at-least-24-characters' \
   -e NIMIQ_RPC_URL='https://YOUR-VERIFIED-TESTNET-NIMIQ-RPC' \
+  -e PROBE_PUBLIC_URL='https://YOUR-PUBLIC-HOST/probe' \
   -v dwellence-data:/data \
   dwellence
 ```
 
-The health check is `GET /healthz`. Do not deploy without HTTPS, persistent private storage, a unique encryption secret, and a testnet RPC endpoint verified against a known transaction.
+The health check is `GET /healthz`. Do not deploy without HTTPS, persistent private storage, a unique encryption secret, `PROBE_PUBLIC_URL` matching the controlled endpoint used by the Mini App, and a testnet RPC endpoint verified against a known transaction.
 
 ## Evidence boundaries
 

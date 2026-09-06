@@ -88,6 +88,7 @@ describe("private request to independently verified report unlock", () => {
     const app = createApp({
       store,
       locationEncryptionKey: "test-only-key-that-is-long-enough-for-aes-256",
+      probeEndpointUrl: "https://probe.example",
       transactionLookup: async () => ({ ...expectedPayment, blockNumber: 99 }),
     });
     await new Promise((resolve) => app.listen(0, "127.0.0.1", resolve));
@@ -163,6 +164,32 @@ describe("private request to independently verified report unlock", () => {
         `/api/requests/${request.body.id}/measurement-challenge`,
         { method: "POST", headers: bearer(contributor.token), body: "{}" },
       );
+      const wrongEndpoint = await json(
+        base,
+        `/api/requests/${request.body.id}/connectivity`,
+        {
+          method: "POST",
+          headers: bearer(contributor.token),
+          body: JSON.stringify({
+            nonce: connectivityNonce.body.nonce,
+            endpoint: "https://uncontrolled.example",
+            downloadMbps: 50,
+            uploadMbps: 10,
+            latencyMs: 20,
+            jitterMs: 5,
+            durationMs: 450,
+            measuredAt: Date.now(),
+            location: {
+              latitude: 6.5001,
+              longitude: 3.3001,
+              accuracyMeters: 20,
+            },
+            context: { networkType: "wifi", userAgentClass: "mobile-webview" },
+          }),
+        },
+      );
+      expect(wrongEndpoint.status).toBe(422);
+      expect(wrongEndpoint.body.code).toBe("PROBE_ENDPOINT_NOT_ALLOWED");
       const farReading = await json(
         base,
         `/api/requests/${request.body.id}/connectivity`,

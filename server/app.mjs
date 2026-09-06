@@ -266,6 +266,7 @@ export function createApp({
   store,
   locationEncryptionKey,
   allowedOrigins = [],
+  probeEndpointUrl = process.env.PROBE_PUBLIC_URL,
   nimiqRpcUrl = process.env.NIMIQ_RPC_URL,
   transactionLookup = null,
   staticDirectory = null,
@@ -273,6 +274,9 @@ export function createApp({
   if (!locationEncryptionKey || locationEncryptionKey.length < 24)
     throw new Error("LOCATION_ENCRYPTION_KEY is required");
   const staticRoot = staticDirectory ? resolve(staticDirectory) : null;
+  const controlledProbeEndpoint = probeEndpointUrl
+    ? String(probeEndpointUrl).replace(/\/$/, "")
+    : null;
 
   return createServer(async (request, response) => {
     try {
@@ -1027,6 +1031,13 @@ export function createApp({
           !String(reading.context?.userAgentClass).trim()
         )
           return send(response, 400, { code: "INVALID_CONNECTIVITY_READING" });
+        if (!controlledProbeEndpoint)
+          return send(response, 503, { code: "PROBE_ENDPOINT_NOT_CONFIGURED" });
+        if (
+          String(reading.endpoint).replace(/\/$/, "") !==
+          controlledProbeEndpoint
+        )
+          return send(response, 422, { code: "PROBE_ENDPOINT_NOT_ALLOWED" });
         const mission = store
           .prepare(
             "SELECT id, location_ciphertext FROM requests WHERE id = ? AND accepted_by = ? AND status = 'accepted' AND window_starts_at <= ? AND window_ends_at >= ?",
