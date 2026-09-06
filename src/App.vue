@@ -14,6 +14,7 @@ import {
 import { pollPaymentInclusion } from "./lib/payment-polling";
 import { calculateSuitability } from "./lib/suitability";
 import { requireConsents } from "./lib/consent";
+import { measurementProgressText } from "./lib/measurement-progress";
 
 const apiUrl = (import.meta.env.VITE_API_URL || window.location.origin).replace(
   /\/$/,
@@ -345,7 +346,6 @@ async function acceptRequest() {
 async function cancelRequest() {
   if (!requestId.value) return;
   busy.value = true;
-  track("measurement_started");
   try {
     const session = await authenticate("seeker");
     await api(`/api/requests/${encodeURIComponent(requestId.value)}/cancel`, {
@@ -371,6 +371,12 @@ async function measureConnectivity() {
     return;
   }
   busy.value = true;
+  track("measurement_started");
+  const progressStartedAt = Date.now();
+  status.value = measurementProgressText(0);
+  const progressTimer = window.setInterval(() => {
+    status.value = measurementProgressText(Date.now() - progressStartedAt);
+  }, 1000);
   try {
     requireConsents(
       {
@@ -432,6 +438,7 @@ async function measureConnectivity() {
         ? error.message
         : "Connectivity measurement failed.";
   } finally {
+    window.clearInterval(progressTimer);
     busy.value = false;
   }
 }
