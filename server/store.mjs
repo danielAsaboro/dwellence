@@ -19,6 +19,7 @@ export function createStore(filename) {
       model TEXT NOT NULL,
       firmware TEXT NOT NULL,
       calibration_status TEXT NOT NULL,
+      reporting_interval_seconds INTEGER NOT NULL DEFAULT 60,
       state TEXT NOT NULL DEFAULT 'challenged',
       created_at INTEGER NOT NULL,
       last_seen_at INTEGER
@@ -75,6 +76,7 @@ export function createStore(filename) {
       sensor_id TEXT NOT NULL REFERENCES sensors(id),
       request_id TEXT NOT NULL REFERENCES requests(id),
       payload_digest TEXT NOT NULL UNIQUE,
+      signature_hex TEXT NOT NULL DEFAULT '',
       temperature_c REAL NOT NULL,
       humidity_percent REAL NOT NULL,
       observed_at INTEGER NOT NULL,
@@ -89,6 +91,7 @@ export function createStore(filename) {
       upload_mbps REAL NOT NULL,
       latency_ms REAL NOT NULL,
       jitter_ms REAL NOT NULL,
+      duration_ms REAL NOT NULL DEFAULT 0,
       location_ciphertext TEXT,
       location_accuracy_m REAL,
       network_type TEXT,
@@ -153,6 +156,10 @@ export function createStore(filename) {
     db.exec(
       "ALTER TABLE connectivity_measurements ADD COLUMN client_context TEXT",
     );
+  if (!connectivityColumns.includes("duration_ms"))
+    db.exec(
+      "ALTER TABLE connectivity_measurements ADD COLUMN duration_ms REAL NOT NULL DEFAULT 0",
+    );
   const requestColumns = db
     .prepare("PRAGMA table_info(requests)")
     .all()
@@ -160,6 +167,22 @@ export function createStore(filename) {
   if (!requestColumns.includes("required_categories_json"))
     db.exec(
       `ALTER TABLE requests ADD COLUMN required_categories_json TEXT NOT NULL DEFAULT '["connectivity","environmental_comfort"]'`,
+    );
+  const sensorColumns = db
+    .prepare("PRAGMA table_info(sensors)")
+    .all()
+    .map((column) => column.name);
+  if (!sensorColumns.includes("reporting_interval_seconds"))
+    db.exec(
+      "ALTER TABLE sensors ADD COLUMN reporting_interval_seconds INTEGER NOT NULL DEFAULT 60",
+    );
+  const readingColumns = db
+    .prepare("PRAGMA table_info(sensor_readings)")
+    .all()
+    .map((column) => column.name);
+  if (!readingColumns.includes("signature_hex"))
+    db.exec(
+      "ALTER TABLE sensor_readings ADD COLUMN signature_hex TEXT NOT NULL DEFAULT ''",
     );
   return db;
 }

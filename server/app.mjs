@@ -157,7 +157,7 @@ function sensorMessage(reading) {
 }
 
 function connectivityMessage(reading) {
-  return `${reading.requestId}\n${reading.nonce}\n${reading.endpoint}\n${reading.downloadMbps}\n${reading.uploadMbps}\n${reading.latencyMs}\n${reading.jitterMs}\n${reading.measuredAt}\n${reading.location.latitude}\n${reading.location.longitude}\n${reading.location.accuracyMeters}\n${reading.context.networkType}\n${reading.context.userAgentClass}`;
+  return `${reading.requestId}\n${reading.nonce}\n${reading.endpoint}\n${reading.downloadMbps}\n${reading.uploadMbps}\n${reading.latencyMs}\n${reading.jitterMs}\n${reading.durationMs}\n${reading.measuredAt}\n${reading.location.latitude}\n${reading.location.longitude}\n${reading.location.accuracyMeters}\n${reading.context.networkType}\n${reading.context.userAgentClass}`;
 }
 
 function requestDigest({
@@ -193,6 +193,7 @@ function sensorBindingDigest({
   model,
   firmware,
   calibrationStatus,
+  reportingIntervalSeconds,
 }) {
   return sha256(
     JSON.stringify({
@@ -200,6 +201,7 @@ function sensorBindingDigest({
       model: String(model).trim(),
       firmware: String(firmware).trim(),
       calibrationStatus: String(calibrationStatus).trim(),
+      reportingIntervalSeconds: Number(reportingIntervalSeconds),
     }),
   );
 }
@@ -714,7 +716,10 @@ export function createApp({
           return send(response, 401, { code: "SEEKER_AUTH_REQUIRED" });
         const updated = store
           .prepare(
-            "UPDATE requests SET status = 'cancelled' WHERE id = ? AND seeker_address = ? AND status = 'shared'",
+            `UPDATE requests SET status = 'cancelled'
+             WHERE id = ? AND seeker_address = ? AND status IN ('shared', 'accepted')
+               AND NOT EXISTS (SELECT 1 FROM connectivity_measurements WHERE request_id = requests.id)
+               AND NOT EXISTS (SELECT 1 FROM sensor_readings WHERE request_id = requests.id)`,
           )
           .run(cancelMatch[1], session.wallet_address);
         if (updated.changes !== 1)
@@ -735,6 +740,9 @@ export function createApp({
           key.length !== 32 ||
           !String(metadata.model).trim() ||
           !String(metadata.firmware).trim() ||
+          !Number.isInteger(metadata.reportingIntervalSeconds) ||
+          metadata.reportingIntervalSeconds < 1 ||
+          metadata.reportingIntervalSeconds > 3600 ||
           !["manufacturer-specified", "field-checked", "uncalibrated"].includes(
             String(metadata.calibrationStatus),
           )
@@ -776,6 +784,7 @@ export function createApp({
           model,
           firmware,
           calibrationStatus,
+          reportingIntervalSeconds,
           registrationChallengeId,
           walletPublicKey,
           walletSignature,
@@ -789,6 +798,9 @@ export function createApp({
           key.length !== 32 ||
           !String(model).trim() ||
           !String(firmware).trim() ||
+          !Number.isInteger(reportingIntervalSeconds) ||
+          reportingIntervalSeconds < 1 ||
+          reportingIntervalSeconds > 3600 ||
           !["manufacturer-specified", "field-checked", "uncalibrated"].includes(
             String(calibrationStatus),
           )
@@ -799,6 +811,7 @@ export function createApp({
           model,
           firmware,
           calibrationStatus,
+          reportingIntervalSeconds,
         });
         const binding = `${session.wallet_address}:${digest}`;
         const nonce = store
@@ -838,7 +851,7 @@ export function createApp({
         try {
           store
             .prepare(
-              "INSERT INTO sensors (id, operator_address, public_key, model, firmware, calibration_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+              "INSERT INTO sensors (id, operator_address, public_key, model, firmware, calibration_status, reporting_interval_seconds, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .run(
               id,
@@ -847,6 +860,7 @@ export function createApp({
               model.trim(),
               firmware.trim(),
               calibrationStatus.trim(),
+              reportingIntervalSeconds,
               Date.now(),
             );
         } catch {
@@ -883,7 +897,7 @@ export function createApp({
         const reading = await readJson(request);
         const sensor = store
           .prepare(
-            "SELECT id, operator_address, public_key FROM sensors WHERE id = ?",
+            "SELECT id, operator_address, public_key, reporting_interval_seconds FROM sensors WHERE id = ?",
           )
           .get(sensorReadingMatch[1]);
         if (!sensor) return send(response, 404, { code: "SENSOR_NOT_FOUND" });
@@ -932,13 +946,14 @@ export function createApp({
         try {
           store
             .prepare(
-              "INSERT INTO sensor_readings (id, sensor_id, request_id, payload_digest, temperature_c, humidity_percent, observed_at, accepted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              "INSERT INTO sensor_readings (id, sensor_id, request_id, payload_digest, signature_hex, temperature_c, humidity_percent, observed_at, accepted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .run(
               opaqueId("env"),
               sensor.id,
               reading.requestId,
               payloadDigest,
+              String(reading.signature).toLowerCase(),
               reading.temperatureC,
               reading.humidityPercent,
               reading.timestamp,
@@ -1000,6 +1015,7 @@ export function createApp({
           !Number.isFinite(reading.uploadMbps) ||
           !Number.isFinite(reading.latencyMs) ||
           !Number.isFinite(reading.jitterMs) ||
+          !Number.isFinite(reading.durationMs) ||
           !Number.isFinite(reading.measuredAt) ||
           !validCoordinates(reading.location) ||
           !Number.isFinite(reading.location?.accuracyMeters) ||
@@ -1048,6 +1064,8 @@ export function createApp({
           reading.latencyMs > 10_000 ||
           reading.jitterMs < 0 ||
           reading.jitterMs > 10_000 ||
+          reading.durationMs <= 0 ||
+          reading.durationMs > 120_000 ||
           Math.abs(Date.now() - reading.measuredAt) > 10 * 60_000
         )
           return send(response, 422, {
@@ -1070,7 +1088,7 @@ export function createApp({
         try {
           store
             .prepare(
-              "INSERT INTO connectivity_measurements (id, request_id, payload_digest, endpoint, download_mbps, upload_mbps, latency_ms, jitter_ms, location_ciphertext, location_accuracy_m, network_type, client_context, measured_at, accepted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "INSERT INTO connectivity_measurements (id, request_id, payload_digest, endpoint, download_mbps, upload_mbps, latency_ms, jitter_ms, duration_ms, location_ciphertext, location_accuracy_m, network_type, client_context, measured_at, accepted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .run(
               opaqueId("net"),
@@ -1081,6 +1099,7 @@ export function createApp({
               reading.uploadMbps,
               reading.latencyMs,
               reading.jitterMs,
+              reading.durationMs,
               encryptLocation(
                 {
                   latitude: reading.location.latitude,
@@ -1187,7 +1206,7 @@ export function createApp({
           return send(response, 404, { code: "ACTIVE_ASSIGNMENT_NOT_FOUND" });
         const sensor = store
           .prepare(
-            "SELECT sensor_readings.*, sensors.model, sensors.firmware, sensors.calibration_status FROM sensor_readings JOIN sensors ON sensors.id = sensor_readings.sensor_id WHERE request_id = ? ORDER BY accepted_at DESC LIMIT 1",
+            "SELECT sensor_readings.*, sensors.model, sensors.firmware, sensors.calibration_status, sensors.reporting_interval_seconds FROM sensor_readings JOIN sensors ON sensors.id = sensor_readings.sensor_id WHERE request_id = ? ORDER BY accepted_at DESC LIMIT 1",
           )
           .get(mission.id);
         const connectivity = store
@@ -1242,6 +1261,7 @@ export function createApp({
               uploadMbps: connectivity.upload_mbps,
               latencyMs: connectivity.latency_ms,
               jitterMs: connectivity.jitter_ms,
+              durationMs: connectivity.duration_ms,
               networkType: connectivity.network_type,
               clientContext: connectivity.client_context,
               locationAccuracyMeters: connectivity.location_accuracy_m,
@@ -1256,6 +1276,8 @@ export function createApp({
               sensorModel: sensor.model,
               firmware: sensor.firmware,
               calibrationStatus: sensor.calibration_status,
+              reportingIntervalSeconds: sensor.reporting_interval_seconds,
+              signature: sensor.signature_hex,
               sampleCount: 1,
               categoryScore: calculateComfortScore(sensor),
             }

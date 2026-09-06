@@ -58,6 +58,7 @@ const probe = ref<ConnectivityProbeResult | null>(null);
 const sensorPublicKey = ref("");
 const sensorModel = ref("BME280");
 const sensorFirmware = ref("");
+const sensorReportingIntervalSeconds = ref(60);
 const calibrationStatus = ref<
   "manufacturer-specified" | "field-checked" | "uncalibrated"
 >("uncalibrated");
@@ -100,12 +101,15 @@ const report = ref<{
     uploadMbps: number;
     latencyMs: number;
     jitterMs: number;
+    durationMs: number;
     categoryScore: number;
   };
   environmentalComfort: null | {
     temperatureC: number;
     humidityPercent: number;
     categoryScore: number;
+    reportingIntervalSeconds: number;
+    signature: string;
   };
   contributorObservations: null | {
     setting: string;
@@ -446,6 +450,7 @@ async function registerSensor() {
       model: sensorModel.value.trim(),
       firmware: sensorFirmware.value.trim(),
       calibrationStatus: calibrationStatus.value,
+      reportingIntervalSeconds: sensorReportingIntervalSeconds.value,
     };
     const challenge = await api("/api/sensors/registration-challenge", {
       method: "POST",
@@ -906,6 +911,12 @@ async function submitFeedback() {
           v-model="sensorFirmware"
           autocomplete="off" /></label
       ><label
+        >Reporting interval (seconds)<input
+          v-model.number="sensorReportingIntervalSeconds"
+          type="number"
+          min="1"
+          max="3600" /></label
+      ><label
         >Calibration status<select v-model="calibrationStatus">
           <option value="uncalibrated">Uncalibrated</option>
           <option value="manufacturer-specified">Manufacturer specified</option>
@@ -1052,6 +1063,10 @@ async function submitFeedback() {
           <dd>{{ report.connectivity.jitterMs }} ms</dd>
         </div>
         <div>
+          <dt>Test duration</dt>
+          <dd>{{ report.connectivity.durationMs }} ms</dd>
+        </div>
+        <div>
           <dt>Connectivity score</dt>
           <dd>{{ report.connectivity.categoryScore }}/100</dd>
         </div>
@@ -1068,6 +1083,18 @@ async function submitFeedback() {
         <div>
           <dt>Comfort score</dt>
           <dd>{{ report.environmentalComfort.categoryScore }}/100</dd>
+        </div>
+        <div>
+          <dt>Sensor reporting interval</dt>
+          <dd>
+            {{ report.environmentalComfort.reportingIntervalSeconds }} seconds
+          </dd>
+        </div>
+        <div>
+          <dt>Device signature</dt>
+          <dd>
+            <code>{{ report.environmentalComfort.signature }}</code>
+          </dd>
         </div>
       </dl>
       <h3>Your suitability score: {{ suitabilityScore }}/100</h3>

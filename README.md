@@ -11,7 +11,7 @@ This repository is the public product code. It does not claim that a signature p
 - Encrypted-at-rest precise request locations; only a coarse cell is stored separately.
 - Invitation-only request acceptance by the designated contributor.
 - Seeker-signed measurement windows and explicit required categories; connectivity remains mandatory for location validation, while missing unrequested categories are excluded rather than assigned a default score.
-- Nimiq-wallet-signed ownership binding for physical sensor metadata and Ed25519 keys; signed sensor challenges, plausibility bounds, and replay rejection.
+- Nimiq-wallet-signed ownership binding for physical sensor metadata, reporting interval, and Ed25519 keys; retained private device signatures, signed sensor challenges, plausibility bounds, and replay rejection.
 - A real browser connectivity probe against a configured controlled endpoint; no local result is represented as accepted evidence.
 - Accuracy-aware location-tolerance checks with encrypted measurement coordinates and minimized device/network context.
 - Optional human observations stored and displayed separately as low-confidence contributor statements, never as instrument readings.
@@ -75,7 +75,7 @@ The health check is `GET /healthz`. Do not deploy without HTTPS, persistent priv
 
 ## Evidence boundaries
 
-The report must keep exact addresses, coordinates, sensor readings, device handles, and full report contents off-chain. Direct NIM transaction data may contain only an opaque report-purchase reference. Read the [privacy notice](PRIVACY.md), [security policy](SECURITY.md), [sensor protocol](docs/sensor-protocol.md), and [physical proof runbook](docs/physical-proof-runbook.md) before a real test.
+The report must keep exact addresses, coordinates, sensor readings, device handles, and full report contents off-chain. Direct NIM transaction data may contain only an opaque report-purchase reference. Read the [privacy notice](PRIVACY.md), [security policy](SECURITY.md), [connectivity protocol](docs/connectivity-protocol.md), [sensor protocol](docs/sensor-protocol.md), and [physical proof runbook](docs/physical-proof-runbook.md) before a real test.
 
 ## License
 

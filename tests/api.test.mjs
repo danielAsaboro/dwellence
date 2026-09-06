@@ -332,6 +332,7 @@ describe("private request API", () => {
           model: "ESP32",
           firmware: "1.0.0",
           calibrationStatus: "field-checked",
+          reportingIntervalSeconds: 60,
         }),
       });
       expect(result.status).toBe(400);
@@ -474,6 +475,40 @@ describe("private request API", () => {
         },
       );
       expect(accept.status).toBe(409);
+    });
+  });
+
+  it("lets the seeker cancel after acceptance until the first measurement is submitted", async () => {
+    await withApi(async (url) => {
+      const seeker = await authenticate(url, "seeker");
+      const contributor = await authenticate(url, "contributor");
+      const request = await createSignedRequest(url, seeker, {
+        location: { latitude: 6.5, longitude: 3.3 },
+        invitedContributor: contributor.address,
+        windowStartsAt: Date.now(),
+        windowEndsAt: Date.now() + 60_000,
+        priceLuna: 1000,
+      });
+      expect(
+        (
+          await json(url, `/api/invitations/${request.body.shareCode}/accept`, {
+            method: "POST",
+            headers: { authorization: `Bearer ${contributor.token}` },
+            body: "{}",
+          })
+        ).status,
+      ).toBe(200);
+      const cancelled = await json(
+        url,
+        `/api/requests/${request.body.id}/cancel`,
+        {
+          method: "POST",
+          headers: { authorization: `Bearer ${seeker.token}` },
+          body: "{}",
+        },
+      );
+      expect(cancelled.status).toBe(200);
+      expect(cancelled.body.status).toBe("cancelled");
     });
   });
 
