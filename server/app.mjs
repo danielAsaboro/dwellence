@@ -4,6 +4,7 @@ import { createServer } from 'node:http'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { extname, resolve, sep } from 'node:path'
 import { lookupIncludedTransaction } from './nimiq-rpc.mjs'
+import { buildAreaAggregate } from './aggregate.mjs'
 import { verifyPurchaseTransaction } from './purchase.mjs'
 
 const JSON_LIMIT = 64 * 1024
@@ -185,6 +186,14 @@ export function createApp({ store, locationEncryptionKey, allowedOrigins = [], n
         return sendEmpty(response, 204)
       }
 
+      if (request.method === 'POST' && url.pathname === '/api/analytics') {
+        const payload = await readJson(request)
+        const allowed = new Set(['app_opened_inside_nimiq_pay', 'app_opened_outside_nimiq_pay', 'wallet_request_started', 'wallet_request_approved', 'wallet_request_denied', 'request_created', 'request_shared', 'request_accepted', 'request_expired', 'measurement_started', 'measurement_completed', 'measurement_rejected', 'sensor_challenge_passed', 'sensor_challenge_failed', 'report_previewed', 'payment_started', 'payment_cancelled', 'payment_submitted', 'payment_included', 'payment_failed', 'report_unlocked', 'aggregate_viewed', 'aggregate_suppressed', 'feedback_submitted'])
+        if (Object.keys(payload).some((key) => !['event', 'clientId'].includes(key)) || !allowed.has(payload.event) || !/^client_[a-zA-Z0-9_-]{16,80}$/.test(String(payload.clientId))) return send(response, 400, { code: 'INVALID_ANALYTICS_EVENT' })
+        store.prepare('INSERT INTO analytics_events (event, client_digest, created_at) VALUES (?, ?, ?)').run(payload.event, sha256(payload.clientId), Date.now())
+        return send(response, 201, { status: 'recorded' })
+      }
+
       if (request.method === 'POST' && url.pathname === '/api/auth/challenge') {
         const { role, address } = await readJson(request)
         if (!['seeker', 'contributor'].includes(role) || !isValidNimiqAddress(address)) return send(response, 400, { code: 'INVALID_AUTH_REQUEST' })
@@ -359,6 +368,24 @@ export function createApp({ store, locationEncryptionKey, allowedOrigins = [], n
       }
 
       const submitMatch = url.pathname.match(/^\/api\/requests\/([^/]+)\/submit$/)
+      const observationsMatch = url.pathname.match(/^\/api\/requests\/([^/]+)\/observations$/)
+      if (request.method === 'POST' && observationsMatch) {
+        const session = requireSession(request, store, 'contributor')
+        if (!session) return send(response, 401, { code: 'CONTRIBUTOR_AUTH_REQUIRED' })
+        const mission = store.prepare("SELECT id FROM requests WHERE id = ? AND accepted_by = ? AND status = 'accepted'").get(observationsMatch[1], session.wallet_address)
+        if (!mission) return send(response, 404, { code: 'ACTIVE_ASSIGNMENT_NOT_FOUND' })
+        const observation = await readJson(request)
+        const allowedSettings = ['indoors', 'outdoors', 'common_area', 'not_stated']
+        const allowedExperiences = ['observed', 'not_observed', 'not_checked']
+        const providers = observation.providerNames
+        if (!allowedSettings.includes(observation.setting) || !allowedExperiences.includes(observation.powerInterruption) || !allowedExperiences.includes(observation.waterAvailability) || !allowedExperiences.includes(observation.drainage) || !Array.isArray(providers) || providers.length > 5 || providers.some((name) => typeof name !== 'string' || !name.trim() || name.length > 80)) return send(response, 400, { code: 'INVALID_CONTRIBUTOR_OBSERVATION' })
+        const recorded = { evidenceClass: 'contributor_observation', setting: observation.setting, powerInterruption: observation.powerInterruption, waterAvailability: observation.waterAvailability, drainage: observation.drainage, providerNames: providers.map((name) => name.trim()), confidence: 'low', limitation: 'Self-reported observation; not an instrument measurement.' }
+        const now = Date.now()
+        store.prepare(`INSERT INTO contributor_observations (request_id, contributor_address, observation_json, observed_at, accepted_at) VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(request_id) DO UPDATE SET observation_json = excluded.observation_json, observed_at = excluded.observed_at, accepted_at = excluded.accepted_at`).run(mission.id, session.wallet_address, JSON.stringify(recorded), now, now)
+        return send(response, 201, { status: 'accepted', observation: recorded })
+      }
+
       if (request.method === 'POST' && submitMatch) {
         const session = requireSession(request, store, 'contributor')
         if (!session) return send(response, 401, { code: 'CONTRIBUTOR_AUTH_REQUIRED' })
@@ -366,12 +393,16 @@ export function createApp({ store, locationEncryptionKey, allowedOrigins = [], n
         if (!mission) return send(response, 404, { code: 'ACTIVE_ASSIGNMENT_NOT_FOUND' })
         const sensor = store.prepare('SELECT sensor_readings.*, sensors.model, sensors.firmware, sensors.calibration_status FROM sensor_readings JOIN sensors ON sensors.id = sensor_readings.sensor_id WHERE request_id = ? ORDER BY accepted_at DESC LIMIT 1').get(mission.id)
         const connectivity = store.prepare('SELECT * FROM connectivity_measurements WHERE request_id = ? ORDER BY accepted_at DESC LIMIT 1').get(mission.id)
+        const observationRow = store.prepare('SELECT observation_json FROM contributor_observations WHERE request_id = ?').get(mission.id)
         if (!sensor || !connectivity) return send(response, 422, { code: 'REQUIRED_EVIDENCE_MISSING' })
         const reportId = opaqueId('report')
         const createdAt = Date.now()
         const confidenceDimensions = { integrity: 'verified', freshness: 'within_window', spatial: 'within_tolerance', temporalCoverage: 'single_session', contributorIndependence: 'single_contributor', deviceQuality: sensor.calibration_status, contextualCompleteness: connectivity.network_type && connectivity.client_context ? 'recorded' : 'limited' }
         const preview = { categories: ['connectivity', 'environmental_comfort'], evidenceCount: 2, measuredAt: Math.max(sensor.observed_at, connectivity.measured_at), confidence: 'low', confidenceDimensions, scorerVersion: 'mvp-1' }
-        const report = { ...preview, areaCell: mission.public_cell, limitations: ['Measurements reflect a specific time and endpoint context.', 'Signatures prove key origin, not physical placement or calibration.', 'This is not an inspection, appraisal, or habitability certification.'], connectivity: { endpoint: connectivity.endpoint, downloadMbps: connectivity.download_mbps, uploadMbps: connectivity.upload_mbps, latencyMs: connectivity.latency_ms, jitterMs: connectivity.jitter_ms, networkType: connectivity.network_type, clientContext: connectivity.client_context, locationAccuracyMeters: connectivity.location_accuracy_m, sampleCount: 1, categoryScore: calculateConnectivityScore(connectivity) }, environmentalComfort: { temperatureC: sensor.temperature_c, humidityPercent: sensor.humidity_percent, sensorModel: sensor.model, firmware: sensor.firmware, calibrationStatus: sensor.calibration_status, sampleCount: 1, categoryScore: calculateComfortScore(sensor) } }
+        const connectivityEvidence = { endpoint: connectivity.endpoint, downloadMbps: connectivity.download_mbps, uploadMbps: connectivity.upload_mbps, latencyMs: connectivity.latency_ms, jitterMs: connectivity.jitter_ms, networkType: connectivity.network_type, clientContext: connectivity.client_context, locationAccuracyMeters: connectivity.location_accuracy_m, sampleCount: 1, categoryScore: calculateConnectivityScore(connectivity) }
+        const comfortEvidence = { temperatureC: sensor.temperature_c, humidityPercent: sensor.humidity_percent, sensorModel: sensor.model, firmware: sensor.firmware, calibrationStatus: sensor.calibration_status, sampleCount: 1, categoryScore: calculateComfortScore(sensor) }
+        const defaultWeights = { connectivity: 50, environmentalComfort: 50 }
+        const report = { ...preview, areaCell: mission.public_cell, defaultWeights, locationEvidenceScore: Math.round((connectivityEvidence.categoryScore + comfortEvidence.categoryScore) / 2), limitations: ['Measurements reflect a specific time and endpoint context.', 'Signatures prove key origin, not physical placement or calibration.', 'This is not an inspection, appraisal, or habitability certification.'], connectivity: connectivityEvidence, environmentalComfort: comfortEvidence, contributorObservations: observationRow ? JSON.parse(observationRow.observation_json) : null }
         try {
           store.prepare('INSERT INTO reports (id, request_id, seeker_address, contributor_address, price_luna, preview_json, report_json, scorer_version, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(reportId, mission.id, mission.seeker_address, mission.accepted_by, mission.price_luna, JSON.stringify(preview), JSON.stringify(report), 'mvp-1', 'awaiting_payment', createdAt)
           store.prepare("UPDATE requests SET status = 'awaiting_payment' WHERE id = ?").run(mission.id)
@@ -441,12 +472,7 @@ export function createApp({ store, locationEncryptionKey, allowedOrigins = [], n
           WHERE requests.public_cell = ?
           ORDER BY sensor_readings.accepted_at DESC
         `).all(cell)
-        const pairs = new Set(rows.map((row) => `${row.accepted_by}:${row.sensor_id}`))
-        const days = new Set(rows.map((row) => new Date(row.accepted_at).toISOString().slice(0, 10)))
-        const thresholds = { contributorDevicePairs: 5, distinctDays: 3 }
-        if (pairs.size < thresholds.contributorDevicePairs || days.size < thresholds.distinctDays) return send(response, 200, { cell, state: 'insufficient_evidence', sampleCount: rows.length, contributorDevicePairs: pairs.size, distinctDays: days.size, thresholds })
-        const reports = rows.map((row) => JSON.parse(row.report_json))
-        return send(response, 200, { cell, state: 'published', sampleCount: rows.length, contributorDevicePairs: pairs.size, distinctDays: days.size, thresholds, score: { connectivity: median(reports.map((report) => report.connectivity.categoryScore)), environmentalComfort: median(reports.map((report) => report.environmentalComfort.categoryScore)), confidence: 'medium', scorerVersion: 'mvp-1' } })
+        return send(response, 200, buildAreaAggregate(cell, rows))
       }
 
       if (request.method === 'GET' && staticRoot && !url.pathname.startsWith('/api/') && !url.pathname.startsWith('/probe/')) {

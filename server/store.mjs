@@ -41,6 +41,12 @@ export function createStore(filename) {
       count INTEGER NOT NULL,
       PRIMARY KEY (key_digest, window_bucket)
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS analytics_events (
+      id INTEGER PRIMARY KEY,
+      event TEXT NOT NULL,
+      client_digest TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    ) STRICT;
     CREATE TABLE IF NOT EXISTS requests (
       id TEXT PRIMARY KEY,
       seeker_address TEXT NOT NULL,
@@ -79,6 +85,13 @@ export function createStore(filename) {
       network_type TEXT,
       client_context TEXT,
       measured_at INTEGER NOT NULL,
+      accepted_at INTEGER NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS contributor_observations (
+      request_id TEXT PRIMARY KEY REFERENCES requests(id),
+      contributor_address TEXT NOT NULL,
+      observation_json TEXT NOT NULL,
+      observed_at INTEGER NOT NULL,
       accepted_at INTEGER NOT NULL
     ) STRICT;
     CREATE TABLE IF NOT EXISTS reports (
@@ -134,6 +147,7 @@ export function runRetention(store, now = Date.now()) {
       store.prepare('DELETE FROM reports WHERE id = ?').run(row.report_id)
       store.prepare('DELETE FROM connectivity_measurements WHERE request_id = ?').run(row.request_id)
       store.prepare('DELETE FROM sensor_readings WHERE request_id = ?').run(row.request_id)
+      store.prepare('DELETE FROM contributor_observations WHERE request_id = ?').run(row.request_id)
       store.prepare('DELETE FROM requests WHERE id = ?').run(row.request_id)
       deletedReports += 1
     }
@@ -149,6 +163,7 @@ export function runRetention(store, now = Date.now()) {
     generalizedLocations = generalized.changes
     store.prepare('DELETE FROM sessions WHERE expires_at < ?').run(now)
     store.prepare('DELETE FROM nonces WHERE expires_at < ?').run(now)
+    store.prepare('DELETE FROM analytics_events WHERE created_at < ?').run(locationCutoff)
     store.exec('COMMIT')
   } catch (error) {
     store.exec('ROLLBACK')

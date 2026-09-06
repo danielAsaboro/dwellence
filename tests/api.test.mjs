@@ -82,6 +82,15 @@ describe('private request API', () => {
     })
   })
 
+  it('accepts only allowlisted minimal analytics without sensitive fields', async () => {
+    await withApi(async (url) => {
+      expect((await json(url, '/api/analytics', { method: 'POST', body: JSON.stringify({ event: 'app_opened_outside_nimiq_pay', clientId: 'client_1234567890123456' }) })).status).toBe(201)
+      const rejected = await json(url, '/api/analytics', { method: 'POST', body: JSON.stringify({ event: 'request_created', clientId: 'client_1234567890123456', walletAddress: 'NQ secret' }) })
+      expect(rejected.status).toBe(400)
+      expect(rejected.body.code).toBe('INVALID_ANALYTICS_EVENT')
+    })
+  })
+
   it('rate limits repeated wallet challenge requests without claiming person uniqueness', async () => {
     await withApi(async (url) => {
       const keyPair = Nimiq.KeyPair.generate()

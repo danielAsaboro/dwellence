@@ -13,8 +13,11 @@ This repository is the public product code. It does not claim that a signature p
 - Nimiq-wallet-signed ownership binding for physical sensor metadata and Ed25519 keys; signed sensor challenges, plausibility bounds, and replay rejection.
 - A real browser connectivity probe against a configured controlled endpoint; no local result is represented as accepted evidence.
 - Accuracy-aware location-tolerance checks with encrypted measurement coordinates and minimized device/network context.
+- Optional human observations stored and displayed separately as low-confidence contributor statements, never as instrument readings.
 - A same-origin controlled download, upload, and latency probe with payload caps.
-- Privacy-safe scoring primitives and public-aggregate suppression until five independent contributor/device pairs across three days.
+- Versioned category scores, explicit confidence dimensions, default Location Evidence weights, and seeker-adjustable personal suitability weights that do not alter evidence.
+- Privacy-safe public aggregation with 90-day freshness, recency weighting, one-report-per-contributor/device influence caps, confidence bands, and suppression until five independent pairs across three days.
+- First-party allowlisted analytics that store only event names, digested ephemeral client IDs, and timestamps—never wallets, coordinates, signatures, or measurement payloads.
 - Sealed reports, opaque direct-payment intents, bounded canonical-RPC polling, idempotent wallet-gated unlocks, and retry UX that never asks the user to pay twice.
 - Enforced startup/daily retention: expired security records are purged, precise locations are generalized after 30 days, and raw evidence/private reports are deleted after 90 days.
 - A single Docker deployment serving the compiled Mini App, verifier API, probe, and health endpoint.

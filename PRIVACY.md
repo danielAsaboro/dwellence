@@ -10,6 +10,7 @@ Dwellence processes only the data needed to commission, verify, purchase, and pr
 - With separate consent, Nimiq Pay supplies an origin-scoped device handle for abuse controls. The backend stores only a one-way digest. The handle identifies a device, not a person.
 - A seeker supplies a precise property location and time window. A contributor grants session location to validate that a measurement occurred within the requested tolerance.
 - Connectivity results, environmental readings, sensor metadata, timestamps, and verification outcomes support the private report.
+- Minimal first-party analytics contain an allowlisted event name, a digest of an ephemeral in-memory client identifier, and a timestamp. Analytics reject additional fields and are deleted after 30 days.
 
 Exact property and measurement locations are encrypted at rest and kept off-chain. Nimiq transaction data contains only an opaque purchase reference. Dwellence does not record audio, video, contacts, recovery phrases, or private keys.
 

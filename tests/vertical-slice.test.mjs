@@ -43,6 +43,7 @@ describe('private request to independently verified report unlock', () => {
       expect(farReading.body.code).toBe('LOCATION_OUTSIDE_REQUEST_TOLERANCE')
       const retryNonce = await json(base, `/api/requests/${request.body.id}/measurement-challenge`, { method: 'POST', headers: bearer(contributor.token), body: '{}' })
       expect((await json(base, `/api/requests/${request.body.id}/connectivity`, { method: 'POST', headers: bearer(contributor.token), body: JSON.stringify({ nonce: retryNonce.body.nonce, endpoint: 'https://probe.example', downloadMbps: 50, uploadMbps: 10, latencyMs: 20, jitterMs: 5, measuredAt: Date.now(), location: { latitude: 6.5001, longitude: 3.3001, accuracyMeters: 20 }, context: { networkType: 'wifi', userAgentClass: 'mobile-webview' } }) })).status).toBe(201)
+      expect((await json(base, `/api/requests/${request.body.id}/observations`, { method: 'POST', headers: bearer(contributor.token), body: JSON.stringify({ setting: 'indoors', powerInterruption: 'not_observed', waterAvailability: 'not_checked', drainage: 'not_checked', providerNames: ['Example ISP'] }) })).status).toBe(201)
       const report = await json(base, `/api/requests/${request.body.id}/submit`, { method: 'POST', headers: bearer(contributor.token), body: '{}' }); expect(report.status).toBe(201)
       expect(report.body.preview.confidenceDimensions.integrity).toBe('verified')
       expect(report.body.preview.confidenceDimensions.spatial).toBe('within_tolerance')
@@ -57,6 +58,9 @@ describe('private request to independently verified report unlock', () => {
       expect(resumedIntent.body).toEqual({ ...intent.body, state: 'not_started' })
       const payment = await json(base, `/api/purchases/${intent.body.id}/verify`, { method: 'POST', headers: bearer(seeker.token), body: JSON.stringify({ transactionHash: 'a'.repeat(64) }) }); expect(payment.body.state).toBe('included')
       const unlocked = await json(base, `/api/reports/${report.body.reportId}`, { headers: bearer(seeker.token) }); expect(unlocked.status).toBe(200); expect(unlocked.body.report.connectivity.categoryScore).toBeTypeOf('number')
+      expect(unlocked.body.report.defaultWeights).toEqual({ connectivity: 50, environmentalComfort: 50 })
+      expect(unlocked.body.report.locationEvidenceScore).toBe(Math.round((unlocked.body.report.connectivity.categoryScore + unlocked.body.report.environmentalComfort.categoryScore) / 2))
+      expect(unlocked.body.report.contributorObservations).toEqual(expect.objectContaining({ evidenceClass: 'contributor_observation', setting: 'indoors', providerNames: ['Example ISP'] }))
       const outsider = await auth(base, 'seeker')
       expect((await json(base, `/api/reports/${report.body.reportId}`, { headers: bearer(outsider.token) })).status).toBe(404)
       const unlockedAt = store.prepare('SELECT unlocked_at FROM purchases WHERE id = ?').get(intent.body.id).unlocked_at
