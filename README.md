@@ -75,7 +75,7 @@ The health check is `GET /healthz`. Do not deploy without HTTPS, persistent priv
 
 ## Evidence boundaries
 
-The report must keep exact addresses, coordinates, sensor readings, device handles, and full report contents off-chain. Direct NIM transaction data may contain only an opaque report-purchase reference. Read the [privacy notice](PRIVACY.md), [security policy](SECURITY.md), [connectivity protocol](docs/connectivity-protocol.md), [sensor protocol](docs/sensor-protocol.md), and [physical proof runbook](docs/physical-proof-runbook.md) before a real test.
+The report must keep exact addresses, coordinates, sensor readings, device handles, and full report contents off-chain. Direct NIM transaction data may contain only an opaque report-purchase reference. Read the [privacy notice](PRIVACY.md), [security policy](SECURITY.md), [scoring reference](docs/scoring.md), [connectivity protocol](docs/connectivity-protocol.md), [sensor protocol](docs/sensor-protocol.md), and [physical proof runbook](docs/physical-proof-runbook.md) before a real test.
 
 ## License
 

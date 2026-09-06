@@ -163,6 +163,7 @@ function connectivityMessage(reading) {
 function requestDigest({
   location,
   invitedContributor,
+  requiredCategories,
   windowStartsAt,
   windowEndsAt,
   priceLuna,
@@ -172,6 +173,7 @@ function requestDigest({
       latitude: Number(location?.latitude),
       longitude: Number(location?.longitude),
       invitedContributor: canonicalAddress(invitedContributor),
+      requiredCategories: normalizeRequiredCategories(requiredCategories),
       windowStartsAt: Number(windowStartsAt),
       windowEndsAt: Number(windowEndsAt),
       priceLuna: Number(priceLuna),

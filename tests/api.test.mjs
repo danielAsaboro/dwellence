@@ -321,6 +321,41 @@ describe("private request API", () => {
     });
   });
 
+  it("rejects required categories changed after the seeker signs", async () => {
+    await withApi(async (url) => {
+      const seeker = await authenticate(url, "seeker");
+      const contributor = await authenticate(url, "contributor");
+      const draft = {
+        location: { latitude: 6.5, longitude: 3.3 },
+        invitedContributor: contributor.address,
+        requiredCategories: ["connectivity", "environmental_comfort"],
+        windowStartsAt: Date.now(),
+        windowEndsAt: Date.now() + 60_000,
+        priceLuna: 1000,
+      };
+      const challenge = await json(url, "/api/requests/challenge", {
+        method: "POST",
+        headers: { authorization: `Bearer ${seeker.token}` },
+        body: JSON.stringify(draft),
+      });
+      const changed = await json(url, "/api/requests", {
+        method: "POST",
+        headers: { authorization: `Bearer ${seeker.token}` },
+        body: JSON.stringify({
+          ...draft,
+          requiredCategories: ["connectivity"],
+          requestChallengeId: challenge.body.challengeId,
+          publicKey: seeker.keyPair.publicKey.toHex(),
+          signature: seeker.keyPair
+            .sign(new TextEncoder().encode(challenge.body.message))
+            .toHex(),
+        }),
+      });
+      expect(changed.status).toBe(401);
+      expect(changed.body.code).toBe("REQUEST_SIGNATURE_INVALID");
+    });
+  });
+
   it("rejects malformed sensor public-key hex before issuing a binding challenge", async () => {
     await withApi(async (url) => {
       const contributor = await authenticate(url, "contributor");
