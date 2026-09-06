@@ -235,7 +235,21 @@ export function runRetention(store, now = Date.now()) {
     `,
       )
       .run(locationCutoff);
-    generalizedLocations = generalized.changes;
+    const generalizedMeasurements = store
+      .prepare(
+        `UPDATE connectivity_measurements
+         SET location_ciphertext = 'generalized-after-retention-window'
+         WHERE location_ciphertext IS NOT NULL
+           AND location_ciphertext != 'generalized-after-retention-window'
+           AND request_id IN (
+             SELECT reports.request_id FROM reports
+             JOIN purchases ON purchases.report_id = reports.id
+             WHERE purchases.unlocked_at IS NOT NULL AND purchases.unlocked_at <= ?
+           )`,
+      )
+      .run(locationCutoff);
+    generalizedLocations =
+      generalized.changes + generalizedMeasurements.changes;
     store.prepare("DELETE FROM sessions WHERE expires_at < ?").run(now);
     store.prepare("DELETE FROM nonces WHERE expires_at < ?").run(now);
     store
