@@ -19,6 +19,7 @@ This repository is the public product code. It does not claim that a signature p
 - Versioned category scores, explicit confidence dimensions, default Location Evidence weights, and seeker-adjustable personal suitability weights that do not alter evidence.
 - Privacy-safe public aggregation with 90-day freshness, recency weighting, one-report-per-contributor/device influence caps, confidence bands, and suppression until five independent pairs across three days.
 - First-party allowlisted analytics that store only event names, digested ephemeral client IDs, and timestamps—never wallets, coordinates, signatures, or measurement payloads.
+- Separate action-specific consent gates and an anonymous early-access feedback form with explicit evidence consent and opaque receipt IDs.
 - Sealed reports, opaque direct-payment intents, bounded canonical-RPC polling, idempotent wallet-gated unlocks, and retry UX that never asks the user to pay twice.
 - Enforced startup/daily retention: expired security records are purged, precise locations are generalized after 30 days, and raw evidence/private reports are deleted after 90 days.
 - A single Docker deployment serving the compiled Mini App, verifier API, probe, and health endpoint.

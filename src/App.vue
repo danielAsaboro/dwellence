@@ -13,6 +13,7 @@ import {
 } from "./lib/nimiq";
 import { pollPaymentInclusion } from "./lib/payment-polling";
 import { calculateSuitability } from "./lib/suitability";
+import { requireConsents } from "./lib/consent";
 
 const apiUrl = (import.meta.env.VITE_API_URL || window.location.origin).replace(
   /\/$/,
@@ -26,6 +27,11 @@ const insideNimiqPay = Boolean(window.nimiqPay || window.nimiq);
 const analyticsClientId = `client_${crypto.randomUUID().replaceAll("-", "")}`;
 const consensus = ref<boolean | null>(null);
 const deviceConsent = ref(false);
+const locationConsent = ref(false);
+const measurementConsent = ref(false);
+const retentionConsent = ref(false);
+const aggregationConsent = ref(false);
+const paymentConsent = ref(false);
 const deviceHandle = ref("");
 const sessionTokens = ref<Partial<Record<"seeker" | "contributor", string>>>(
   {},
@@ -120,6 +126,10 @@ const areaAggregate = ref<{
 } | null>(null);
 const connectivityWeight = ref(50);
 const comfortWeight = ref(50);
+const feedbackRating = ref(5);
+const feedbackComment = ref("");
+const feedbackEvidenceConsent = ref(false);
+const feedbackReceipt = ref("");
 const readyForApi = computed(() => Boolean(apiUrl && walletAddress.value));
 const suitabilityScore = computed(() =>
   report.value
@@ -222,6 +232,15 @@ async function createRequest() {
   }
   busy.value = true;
   try {
+    requireConsents(
+      {
+        location: locationConsent.value,
+        measurement: measurementConsent.value,
+        retention: retentionConsent.value,
+        aggregation: aggregationConsent.value,
+      },
+      ["location", "measurement", "retention", "aggregation"],
+    );
     const session = await authenticate("seeker");
     const position = await new Promise<GeolocationPosition>((resolve, reject) =>
       navigator.geolocation.getCurrentPosition(resolve, reject, {
@@ -287,6 +306,15 @@ async function acceptRequest() {
   }
   busy.value = true;
   try {
+    requireConsents(
+      {
+        location: locationConsent.value,
+        measurement: measurementConsent.value,
+        retention: retentionConsent.value,
+        aggregation: aggregationConsent.value,
+      },
+      ["location", "measurement", "retention", "aggregation"],
+    );
     const session = await authenticate("contributor");
     const accepted = await api(
       `/api/invitations/${encodeURIComponent(invitationCode.value)}/accept`,
@@ -340,6 +368,13 @@ async function measureConnectivity() {
   }
   busy.value = true;
   try {
+    requireConsents(
+      {
+        location: locationConsent.value,
+        measurement: measurementConsent.value,
+      },
+      ["location", "measurement"],
+    );
     const position = await new Promise<GeolocationPosition>((resolve, reject) =>
       navigator.geolocation.getCurrentPosition(resolve, reject, {
         enableHighAccuracy: true,
@@ -404,6 +439,7 @@ async function registerSensor() {
   }
   busy.value = true;
   try {
+    requireConsents({ measurement: measurementConsent.value }, ["measurement"]);
     const session = await authenticate("contributor");
     const metadata = {
       publicKey: sensorPublicKey.value.trim(),
@@ -470,6 +506,7 @@ async function saveObservations() {
   if (!requestId.value) return;
   busy.value = true;
   try {
+    requireConsents({ measurement: measurementConsent.value }, ["measurement"]);
     const session = await authenticate("contributor");
     await api(
       `/api/requests/${encodeURIComponent(requestId.value)}/observations`,
@@ -505,6 +542,13 @@ async function sealReport() {
   }
   busy.value = true;
   try {
+    requireConsents(
+      {
+        retention: retentionConsent.value,
+        aggregation: aggregationConsent.value,
+      },
+      ["retention", "aggregation"],
+    );
     const session = await authenticate("contributor");
     const result = await api(
       `/api/requests/${encodeURIComponent(requestId.value)}/submit`,
@@ -567,6 +611,7 @@ async function payAndUnlock() {
   busy.value = true;
   track("payment_started");
   try {
+    requireConsents({ payment: paymentConsent.value }, ["payment"]);
     transactionHash.value = await sendPurchasePayment({
       recipient: purchase.value.recipient,
       value: purchase.value.valueLuna,
@@ -631,6 +676,30 @@ async function verifyPayment(poll = false) {
     busy.value = false;
   }
 }
+
+async function submitFeedback() {
+  busy.value = true;
+  try {
+    const result = await api("/api/feedback", {
+      method: "POST",
+      body: JSON.stringify({
+        clientId: analyticsClientId,
+        rating: feedbackRating.value,
+        comment: feedbackComment.value,
+        evidenceConsent: feedbackEvidenceConsent.value,
+      }),
+    });
+    feedbackReceipt.value = result.receiptId;
+    track("feedback_submitted");
+    status.value =
+      "Feedback recorded with your evidence consent. Save the receipt ID for the test record.";
+  } catch (error) {
+    status.value =
+      error instanceof Error ? error.message : "Feedback submission failed.";
+  } finally {
+    busy.value = false;
+  }
+}
 </script>
 
 <template>
@@ -667,12 +736,37 @@ async function verifyPayment(poll = false) {
       >
     </section>
     <section class="card consent">
-      <h2>Consent for abuse controls</h2>
+      <h2>Specific consent</h2>
       <label
         ><input v-model="deviceConsent" type="checkbox" /> Allow Nimiq Pay to
         provide this app an origin-scoped device handle for replay and abuse
         controls. It identifies this device, not you, and the server stores only
         a digest.</label
+      >
+      <label
+        ><input v-model="locationConsent" type="checkbox" /> Allow precise
+        session location to validate the commissioned property tolerance; it is
+        encrypted and kept off-chain.</label
+      >
+      <label
+        ><input v-model="measurementConsent" type="checkbox" /> Allow the
+        selected connectivity, sensor, and optional observation evidence to be
+        collected for this request.</label
+      >
+      <label
+        ><input v-model="retentionConsent" type="checkbox" /> Allow the private
+        report and accepted raw evidence to be retained for up to 90 days, with
+        precise locations generalized after 30 days.</label
+      >
+      <label
+        ><input v-model="aggregationConsent" type="checkbox" /> Allow qualifying
+        evidence to contribute anonymously to an area aggregate only after
+        privacy thresholds are met.</label
+      >
+      <label
+        ><input v-model="paymentConsent" type="checkbox" /> I understand report
+        payment is a direct, irreversible NIM transfer to the contributor and
+        Dwellence is not escrow.</label
       >
     </section>
     <section class="card">
@@ -1052,6 +1146,40 @@ async function verifyPayment(poll = false) {
           areaAggregate.thresholds.distinctDays
         }}
         required days.
+      </p>
+    </section>
+    <section class="card">
+      <h2>Early-access feedback</h2>
+      <p>
+        No name or wallet address is requested. Consented feedback is retained
+        for up to 90 days as submission evidence.
+      </p>
+      <label
+        >Rating (1–5)<input
+          v-model.number="feedbackRating"
+          type="number"
+          min="1"
+          max="5"
+      /></label>
+      <label
+        >What worked or blocked you?<textarea
+          v-model="feedbackComment"
+          maxlength="1000"
+        ></textarea>
+      </label>
+      <label
+        ><input v-model="feedbackEvidenceConsent" type="checkbox" /> I consent
+        to this anonymous feedback and timestamp being retained and used as
+        hackathon evidence.</label
+      >
+      <button
+        :disabled="busy || !feedbackComment.trim() || !feedbackEvidenceConsent"
+        @click="submitFeedback"
+      >
+        Submit feedback
+      </button>
+      <p v-if="feedbackReceipt" class="credential">
+        <strong>Feedback receipt</strong><code>{{ feedbackReceipt }}</code>
       </p>
     </section>
     <p class="status" aria-live="polite">{{ status }}</p>

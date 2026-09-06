@@ -11,6 +11,7 @@ Dwellence processes only the data needed to commission, verify, purchase, and pr
 - A seeker supplies a precise property location and time window. A contributor grants session location to validate that a measurement occurred within the requested tolerance.
 - Connectivity results, environmental readings, sensor metadata, timestamps, and verification outcomes support the private report.
 - Minimal first-party analytics contain an allowlisted event name, a digest of an ephemeral in-memory client identifier, and a timestamp. Analytics reject additional fields and are deleted after 30 days.
+- Optional early-access feedback contains a 1–5 rating, comment, consent timestamp, and digest of the ephemeral client identifier. It requests no name or wallet address, returns an opaque receipt ID, and is deleted after 90 days.
 
 Exact property and measurement locations are encrypted at rest and kept off-chain. Nimiq transaction data contains only an opaque purchase reference. Dwellence does not record audio, video, contacts, recovery phrases, or private keys.
 

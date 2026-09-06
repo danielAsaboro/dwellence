@@ -1,7 +1,7 @@
-import { DatabaseSync } from 'node:sqlite'
+import { DatabaseSync } from "node:sqlite";
 
 export function createStore(filename) {
-  const db = new DatabaseSync(filename)
+  const db = new DatabaseSync(filename);
   db.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
@@ -45,6 +45,14 @@ export function createStore(filename) {
       id INTEGER PRIMARY KEY,
       event TEXT NOT NULL,
       client_digest TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS tester_feedback (
+      id TEXT PRIMARY KEY,
+      client_digest TEXT NOT NULL,
+      rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
+      comment TEXT NOT NULL,
+      evidence_consent_at INTEGER NOT NULL,
       created_at INTEGER NOT NULL
     ) STRICT;
     CREATE TABLE IF NOT EXISTS requests (
@@ -118,43 +126,82 @@ export function createStore(filename) {
       state TEXT NOT NULL,
       unlocked_at INTEGER
     ) STRICT;
-  `)
-  const sessionColumns = db.prepare('PRAGMA table_info(sessions)').all().map((column) => column.name)
-  if (!sessionColumns.includes('device_handle_digest')) db.exec('ALTER TABLE sessions ADD COLUMN device_handle_digest TEXT')
-  const connectivityColumns = db.prepare('PRAGMA table_info(connectivity_measurements)').all().map((column) => column.name)
-  if (!connectivityColumns.includes('location_ciphertext')) db.exec('ALTER TABLE connectivity_measurements ADD COLUMN location_ciphertext TEXT')
-  if (!connectivityColumns.includes('location_accuracy_m')) db.exec('ALTER TABLE connectivity_measurements ADD COLUMN location_accuracy_m REAL')
-  if (!connectivityColumns.includes('network_type')) db.exec('ALTER TABLE connectivity_measurements ADD COLUMN network_type TEXT')
-  if (!connectivityColumns.includes('client_context')) db.exec('ALTER TABLE connectivity_measurements ADD COLUMN client_context TEXT')
-  const requestColumns = db.prepare('PRAGMA table_info(requests)').all().map((column) => column.name)
-  if (!requestColumns.includes('required_categories_json')) db.exec(`ALTER TABLE requests ADD COLUMN required_categories_json TEXT NOT NULL DEFAULT '["connectivity","environmental_comfort"]'`)
-  return db
+  `);
+  const sessionColumns = db
+    .prepare("PRAGMA table_info(sessions)")
+    .all()
+    .map((column) => column.name);
+  if (!sessionColumns.includes("device_handle_digest"))
+    db.exec("ALTER TABLE sessions ADD COLUMN device_handle_digest TEXT");
+  const connectivityColumns = db
+    .prepare("PRAGMA table_info(connectivity_measurements)")
+    .all()
+    .map((column) => column.name);
+  if (!connectivityColumns.includes("location_ciphertext"))
+    db.exec(
+      "ALTER TABLE connectivity_measurements ADD COLUMN location_ciphertext TEXT",
+    );
+  if (!connectivityColumns.includes("location_accuracy_m"))
+    db.exec(
+      "ALTER TABLE connectivity_measurements ADD COLUMN location_accuracy_m REAL",
+    );
+  if (!connectivityColumns.includes("network_type"))
+    db.exec(
+      "ALTER TABLE connectivity_measurements ADD COLUMN network_type TEXT",
+    );
+  if (!connectivityColumns.includes("client_context"))
+    db.exec(
+      "ALTER TABLE connectivity_measurements ADD COLUMN client_context TEXT",
+    );
+  const requestColumns = db
+    .prepare("PRAGMA table_info(requests)")
+    .all()
+    .map((column) => column.name);
+  if (!requestColumns.includes("required_categories_json"))
+    db.exec(
+      `ALTER TABLE requests ADD COLUMN required_categories_json TEXT NOT NULL DEFAULT '["connectivity","environmental_comfort"]'`,
+    );
+  return db;
 }
 
 export function runRetention(store, now = Date.now()) {
-  const day = 24 * 60 * 60 * 1000
-  const reportCutoff = now - 90 * day
-  const locationCutoff = now - 30 * day
-  let deletedReports = 0
-  let generalizedLocations = 0
+  const day = 24 * 60 * 60 * 1000;
+  const reportCutoff = now - 90 * day;
+  const locationCutoff = now - 30 * day;
+  let deletedReports = 0;
+  let generalizedLocations = 0;
 
-  store.exec('BEGIN IMMEDIATE')
+  store.exec("BEGIN IMMEDIATE");
   try {
-    const expired = store.prepare(`
+    const expired = store
+      .prepare(
+        `
       SELECT reports.id AS report_id, reports.request_id
       FROM reports JOIN purchases ON purchases.report_id = reports.id
       WHERE purchases.unlocked_at IS NOT NULL AND purchases.unlocked_at <= ?
-    `).all(reportCutoff)
+    `,
+      )
+      .all(reportCutoff);
     for (const row of expired) {
-      store.prepare('DELETE FROM purchases WHERE report_id = ?').run(row.report_id)
-      store.prepare('DELETE FROM reports WHERE id = ?').run(row.report_id)
-      store.prepare('DELETE FROM connectivity_measurements WHERE request_id = ?').run(row.request_id)
-      store.prepare('DELETE FROM sensor_readings WHERE request_id = ?').run(row.request_id)
-      store.prepare('DELETE FROM contributor_observations WHERE request_id = ?').run(row.request_id)
-      store.prepare('DELETE FROM requests WHERE id = ?').run(row.request_id)
-      deletedReports += 1
+      store
+        .prepare("DELETE FROM purchases WHERE report_id = ?")
+        .run(row.report_id);
+      store.prepare("DELETE FROM reports WHERE id = ?").run(row.report_id);
+      store
+        .prepare("DELETE FROM connectivity_measurements WHERE request_id = ?")
+        .run(row.request_id);
+      store
+        .prepare("DELETE FROM sensor_readings WHERE request_id = ?")
+        .run(row.request_id);
+      store
+        .prepare("DELETE FROM contributor_observations WHERE request_id = ?")
+        .run(row.request_id);
+      store.prepare("DELETE FROM requests WHERE id = ?").run(row.request_id);
+      deletedReports += 1;
     }
-    const generalized = store.prepare(`
+    const generalized = store
+      .prepare(
+        `
       UPDATE requests SET location_ciphertext = 'generalized-after-retention-window'
       WHERE location_ciphertext != 'generalized-after-retention-window'
         AND id IN (
@@ -162,15 +209,22 @@ export function runRetention(store, now = Date.now()) {
           JOIN purchases ON purchases.report_id = reports.id
           WHERE purchases.unlocked_at IS NOT NULL AND purchases.unlocked_at <= ?
         )
-    `).run(locationCutoff)
-    generalizedLocations = generalized.changes
-    store.prepare('DELETE FROM sessions WHERE expires_at < ?').run(now)
-    store.prepare('DELETE FROM nonces WHERE expires_at < ?').run(now)
-    store.prepare('DELETE FROM analytics_events WHERE created_at < ?').run(locationCutoff)
-    store.exec('COMMIT')
+    `,
+      )
+      .run(locationCutoff);
+    generalizedLocations = generalized.changes;
+    store.prepare("DELETE FROM sessions WHERE expires_at < ?").run(now);
+    store.prepare("DELETE FROM nonces WHERE expires_at < ?").run(now);
+    store
+      .prepare("DELETE FROM analytics_events WHERE created_at < ?")
+      .run(locationCutoff);
+    store
+      .prepare("DELETE FROM tester_feedback WHERE created_at < ?")
+      .run(reportCutoff);
+    store.exec("COMMIT");
   } catch (error) {
-    store.exec('ROLLBACK')
-    throw error
+    store.exec("ROLLBACK");
+    throw error;
   }
-  return { generalizedLocations, deletedReports }
+  return { generalizedLocations, deletedReports };
 }
