@@ -737,6 +737,7 @@ export function createApp({
         const metadata = await readJson(request);
         const key = Buffer.from(String(metadata.publicKey), "hex");
         if (
+          !/^[0-9a-f]{64}$/i.test(String(metadata.publicKey)) ||
           key.length !== 32 ||
           !String(metadata.model).trim() ||
           !String(metadata.firmware).trim() ||
@@ -795,6 +796,7 @@ export function createApp({
           });
         const key = Buffer.from(String(publicKey), "hex");
         if (
+          !/^[0-9a-f]{64}$/i.test(String(publicKey)) ||
           key.length !== 32 ||
           !String(model).trim() ||
           !String(firmware).trim() ||

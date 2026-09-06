@@ -328,7 +328,7 @@ describe("private request API", () => {
         method: "POST",
         headers: { authorization: `Bearer ${contributor.token}` },
         body: JSON.stringify({
-          publicKey: "zz".repeat(32),
+          publicKey: `${"ab".repeat(32)}zz`,
           model: "ESP32",
           firmware: "1.0.0",
           calibrationStatus: "field-checked",
