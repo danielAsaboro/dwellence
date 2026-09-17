@@ -24,6 +24,8 @@ const probeUrl = (
   import.meta.env.VITE_PROBE_URL || `${window.location.origin}/probe`
 ).replace(/\/$/, "");
 const walletAddress = ref("");
+const isWorkspace = /^\/workspace\/?$/.test(window.location.pathname);
+const deskPanel = ref<"setup" | "requests" | "reports" | "feedback">("setup");
 const insideNimiqPay = Boolean(window.nimiqPay || window.nimiq);
 const analyticsClientId = `client_${crypto.randomUUID().replaceAll("-", "")}`;
 const consensus = ref<boolean | null>(null);
@@ -160,13 +162,14 @@ function track(event: string) {
   }).catch(() => undefined);
 }
 
-onMounted(() =>
+onMounted(() => {
+  if (!isWorkspace) return;
   track(
     insideNimiqPay
       ? "app_opened_inside_nimiq_pay"
       : "app_opened_outside_nimiq_pay",
-  ),
-);
+  );
+});
 
 async function api(path: string, options: RequestInit = {}) {
   if (!apiUrl)
@@ -715,19 +718,21 @@ async function submitFeedback() {
 </script>
 
 <template>
-  <a class="skip-link" href="#workspace">Skip to measurement workspace</a>
-  <main>
-    <nav class="site-nav" aria-label="Main navigation">
-      <a class="wordmark" href="#home" aria-label="Dwellence home"><span class="brand-mark" aria-hidden="true">d.</span>Dwellence</a>
-      <div class="nav-links"><a href="#method">The approach</a><a href="#workspace">Workspace ↗</a></div>
+  <a class="skip-link" :href="isWorkspace ? '#workspace' : '#home'">Skip to main content</a>
+  <main :class="{ 'app-shell': isWorkspace }">
+    <nav class="site-nav" :aria-label="isWorkspace ? 'Application navigation' : 'Main navigation'">
+      <a class="wordmark" href="/" aria-label="Dwellence home"><span class="brand-mark" aria-hidden="true">d.</span>Dwellence</a>
+      <div v-if="!isWorkspace" class="nav-links"><a href="#method">The approach</a><a href="/workspace">Open workspace ↗</a></div>
+      <div v-else class="nav-links"><span class="app-nav-current">Measurement desk</span><a href="/">Back to website ↗</a></div>
       <span class="network-tag"><i aria-hidden="true"></i>Nimiq Pay · Testnet</span>
     </nav>
+    <template v-if="!isWorkspace">
     <header id="home" class="hero">
       <div class="hero-copy">
         <p class="eyebrow"><span class="short-rule"></span>A little certainty. Before you commit.</p>
         <h1>A good address.<br />But how does it<br /><em>actually live?</em></h1>
         <p class="lede">The listing tells a story. Get evidence of the everyday: the connection, the conditions, the things you’ll live with.</p>
-        <a class="primary-link" href="#workspace">Commission a measurement <span aria-hidden="true">↗</span></a>
+        <a class="primary-link" href="/workspace">Commission a measurement <span aria-hidden="true">↗</span></a>
         <p class="hero-footnote">Private property reports. Direct NIM payments.<br />No inspections, appraisals, or guarantees.</p>
       </div>
       <div class="hero-art">
@@ -758,12 +763,20 @@ async function submitFeedback() {
       <article><span class="method-number">02 / MEASURE</span><h3>Keep the evidence fresh.</h3><p>Controlled connectivity checks and signed physical-sensor readings. Scores and confidence, kept separate.</p></article>
       <article><span class="method-number">03 / DECIDE</span><h3>Pay for a private report.</h3><p>A direct NIM transfer to the contributor. Access opens only after independent payment verification.</p></article>
     </section>
-    <div id="workspace" class="workspace-heading"><div><p class="eyebrow">YOUR FIELD WORKSPACE</p><h2>Let’s examine a place.</h2></div><span class="workspace-label">EARLY ACCESS / TESTNET ONLY</span></div>
+    <section class="landing-invitation"><div><p class="eyebrow">START WITH A QUESTION</p><h2>What do you need to know<br /><em>before you move?</em></h2></div><div><p>Commission a private report or contribute measurements through Nimiq Pay. Use low-value testnet accounts during early access.</p><a class="primary-link" href="/workspace">Open your workspace <span aria-hidden="true">↗</span></a></div></section>
+    </template>
+    <template v-else>
+    <div id="workspace" class="workspace-heading"><div><p class="eyebrow">MEASUREMENT DESK</p><h1>Your field workspace.</h1><p class="dashboard-subtitle">Commission evidence, contribute measurements, and access your private reports.</p></div><span class="workspace-label">EARLY ACCESS / TESTNET ONLY</span></div>
     <div class="workspace-layout">
     <aside class="workspace-aside" aria-label="Measurement guide">
-      <span class="aside-index">DW / FIELD DESK</span><h3>Good decisions<br />start with<br /><em>better questions.</em></h3>
-      <p>Use two distinct wallets: one commissioning the report, one contributing the evidence.</p>
-      <ol><li>Connect &amp; give consent</li><li>Commission or contribute</li><li>Measure &amp; verify</li><li>Unlock your report</li></ol>
+      <span class="aside-index">WORKSPACE NAVIGATION</span>
+      <nav class="desk-nav" aria-label="Workspace sections">
+        <button :class="{ selected: deskPanel === 'setup' }" :aria-pressed="deskPanel === 'setup'" @click="deskPanel = 'setup'">01 <span>Wallet &amp; permissions</span></button>
+        <button :class="{ selected: deskPanel === 'requests' }" :aria-pressed="deskPanel === 'requests'" @click="deskPanel = 'requests'">02 <span>Requests &amp; measurements</span></button>
+        <button :class="{ selected: deskPanel === 'reports' }" :aria-pressed="deskPanel === 'reports'" @click="deskPanel = 'reports'">03 <span>Private reports</span></button>
+        <button :class="{ selected: deskPanel === 'feedback' }" :aria-pressed="deskPanel === 'feedback'" @click="deskPanel = 'feedback'">04 <span>Feedback</span></button>
+      </nav>
+      <div class="desk-session"><span class="aside-index">THIS SESSION</span><p>{{ walletAddress ? 'Wallet connected' : 'Wallet not connected' }}</p><p>{{ requestId ? 'Request active' : 'No active request' }}</p><p>{{ report ? 'Private report unlocked' : 'No unlocked report' }}</p></div>
       <div class="aside-note"><span aria-hidden="true">↳</span><p>Exact locations stay off-chain. Public scores only appear when privacy thresholds are met.</p></div>
       <a href="https://github.com/danielAsaboro/dwellence" target="_blank" rel="noopener noreferrer">Open-source, by design ↗</a>
     </aside>
@@ -779,7 +792,8 @@ async function submitFeedback() {
       off-chain. A direct NIM payment contains only an opaque report reference.
       Signatures establish key control, not physical truth.
     </section>
-    <section class="card wallet">
+    <div v-show="deskPanel === 'setup'" class="desk-panel" aria-label="Wallet and permissions">
+    <section id="connection" class="card wallet">
       <div>
         <h2>01. Your wallet</h2>
         <p>{{ walletAddress || "No wallet connected" }}</p>
@@ -790,7 +804,7 @@ async function submitFeedback() {
         >Consensus is unavailable; payment must remain disabled.</small
       >
     </section>
-    <section class="card consent">
+    <section id="permissions" class="card consent">
       <h2>Your evidence. Your permission.</h2>
       <label
         ><input v-model="deviceConsent" type="checkbox" /> Allow Nimiq Pay to
@@ -824,7 +838,9 @@ async function submitFeedback() {
         Dwellence is not escrow.</label
       >
     </section>
-    <section class="card">
+    </div>
+    <div v-show="deskPanel === 'requests'" class="desk-panel" aria-label="Requests and measurements">
+    <section id="commission" class="card">
       <div class="tabs">
         <button :class="{ active: mode === 'seeker' }" @click="mode = 'seeker'">
           I’m seeking evidence</button
@@ -1037,7 +1053,9 @@ async function submitFeedback() {
         Save separate observations
       </button>
     </section>
-    <section v-if="mode === 'contributor'" class="card">
+    </div>
+    <div v-show="deskPanel === 'reports'" class="desk-panel" aria-label="Private reports">
+    <section id="reports" v-if="mode === 'contributor'" class="card">
       <h2>4. Seal verified evidence</h2>
       <p>
         Sealing fails until every category commissioned in the signed request
@@ -1054,7 +1072,7 @@ async function submitFeedback() {
         ><code>{{ reportId }}</code>
       </p>
     </section>
-    <section v-else class="card">
+    <section id="reports" v-else class="card">
       <h2>3. Preview and unlock a report</h2>
       <label
         >Private report ID
@@ -1225,7 +1243,9 @@ async function submitFeedback() {
         required days.
       </p>
     </section>
-    <section class="card">
+    </div>
+    <div v-show="deskPanel === 'feedback'" class="desk-panel" aria-label="Feedback">
+    <section id="feedback" class="card">
       <h2>Early-access feedback</h2>
       <p>
         No name or wallet address is requested. Consented feedback is retained
@@ -1259,9 +1279,12 @@ async function submitFeedback() {
         <strong>Feedback receipt</strong><code>{{ feedbackReceipt }}</code>
       </p>
     </section>
+    </div>
     <p class="status" aria-live="polite">{{ status }}</p>
     </div>
     </div>
-    <footer class="site-footer"><a class="wordmark" href="#home">Dwellence.</a><p>Measure the everyday.<br />Make a more informed move.</p><div><span>Nimiq Pay Mini App · Testnet</span><a href="https://github.com/danielAsaboro/dwellence" target="_blank" rel="noopener noreferrer">Source &amp; documentation ↗</a><small>Informational reports. Not escrow. Not a guarantee.</small></div></footer>
+    </template>
+    <footer v-if="!isWorkspace" class="site-footer"><a class="wordmark" href="/">Dwellence.</a><p>Measure the everyday.<br />Make a more informed move.</p><div><span>Nimiq Pay Mini App · Testnet</span><a href="https://github.com/danielAsaboro/dwellence" target="_blank" rel="noopener noreferrer">Source &amp; documentation ↗</a><small>Informational reports. Not escrow. Not a guarantee.</small></div></footer>
+    <footer v-else class="app-footer"><span>Dwellence / Testnet workspace</span><span>Private evidence. Direct transfers. Not escrow.</span><a href="/">Back to website ↗</a></footer>
   </main>
 </template>
