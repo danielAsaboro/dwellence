@@ -12,6 +12,7 @@ Dwellence processes only the data needed to commission, verify, purchase, and pr
 - Connectivity results, environmental readings, sensor metadata, timestamps, and verification outcomes support the private report.
 - Minimal first-party analytics contain an allowlisted event name, a digest of an ephemeral in-memory client identifier, and a timestamp. Analytics reject additional fields and are deleted after 30 days.
 - Optional early-access feedback contains a 1–5 rating, comment, consent timestamp, and digest of the ephemeral client identifier. It requests no name or wallet address, returns an opaque receipt ID, and is deleted after 90 days.
+- After an approved payment returns a transaction hash, this origin saves a local recovery receipt containing only its report ID, purchase ID, hash and timestamp. It contains no private key, session token, readings or coordinates. Receipts are ignored and removed when read after 90 days; browser storage can also be cleared by the user. Clearing it does not reverse a transfer. Authenticated server purchase state remains the primary recovery source; the original hash can be recovered from Nimiq Pay when local storage is unavailable.
 
 Exact property and measurement locations are encrypted at rest and kept off-chain. Nimiq transaction data contains only an opaque purchase reference. Dwellence does not record audio, video, contacts, recovery phrases, or private keys.
 

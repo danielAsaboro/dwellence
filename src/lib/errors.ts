@@ -78,6 +78,8 @@ const MESSAGES: Record<string, string> = {
     "This report is not awaiting payment or does not belong to this wallet.",
   PURCHASE_NOT_FOUND:
     "This purchase does not belong to the connected seeker wallet.",
+  PURCHASE_ALREADY_INCLUDED:
+    "This report was already purchased with another recorded hash. Reopen the report; do not send another payment.",
   INVALID_TRANSACTION_HASH:
     "Nimiq Pay returned an invalid transaction hash. Do not retry payment; retry verification with the original hash.",
   NIMIQ_RPC_NOT_CONFIGURED:

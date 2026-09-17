@@ -11,7 +11,7 @@ import {
   sendPurchasePayment,
   signMessage,
 } from "./lib/nimiq";
-import { pollPaymentInclusion } from "./lib/payment-polling";
+import { pollPaymentInclusion, recoveryAction, persistPaymentReceipt, recoverPaymentReceipt } from "./lib/payment-polling";
 import { calculateSuitability } from "./lib/suitability";
 import { requireConsents } from "./lib/consent";
 import { measurementProgressText } from "./lib/measurement-progress";
@@ -92,8 +92,12 @@ const purchase = ref<{
   reference: string;
   recipient: string;
   valueLuna: number;
+  state: string;
 } | null>(null);
 const transactionHash = ref("");
+const loadedReportState = ref("");
+const loadedReportId = ref("");
+const paymentAction = computed(() => purchase.value ? recoveryAction(loadedReportState.value, purchase.value.state, transactionHash.value, loadedReportId.value, reportId.value) : null);
 const report = ref<{
   areaCell: string;
   confidenceDimensions: Record<string, string>;
@@ -584,11 +588,19 @@ async function sealReport() {
 }
 
 async function loadPreview() {
+  reportId.value = reportId.value.trim();
   if (!reportId.value) {
     status.value = "Enter the report ID shared by the contributor.";
     return;
   }
   busy.value = true;
+  // Never retain another report's transfer or unlocked contents while switching IDs.
+  purchase.value = null;
+  transactionHash.value = "";
+  report.value = null;
+  preview.value = null;
+  areaAggregate.value = null;
+  loadedReportState.value = "";
   try {
     const session = await authenticate("seeker");
     const result = await api(
@@ -597,7 +609,15 @@ async function loadPreview() {
     );
     track("report_previewed");
     preview.value = result.preview;
-    const intent = await api(
+    loadedReportState.value = result.reportState;
+    loadedReportId.value = reportId.value;
+    if (result.reportState === "unlocked") {
+      const unlocked = await api(`/api/reports/${encodeURIComponent(reportId.value)}`, { headers: { authorization: `Bearer ${session.token}` } });
+      report.value = unlocked.report;
+      status.value = "Your already-purchased private report is open. No additional payment is needed.";
+      return;
+    }
+    const intent = result.purchase || await api(
       `/api/reports/${encodeURIComponent(reportId.value)}/purchase-intent`,
       {
         method: "POST",
@@ -610,9 +630,18 @@ async function loadPreview() {
       reference: intent.reference,
       recipient: intent.recipient,
       valueLuna: intent.valueLuna,
+      state: intent.state,
     };
-    status.value =
-      "Sealed preview loaded. Review the recipient and low-value testnet amount before the native payment approval.";
+    transactionHash.value = intent.transactionHash || "";
+    if (!transactionHash.value) {
+      try { transactionHash.value = recoverPaymentReceipt(window.localStorage, reportId.value, intent.id); } catch { /* Manual receipt recovery remains available when storage is disabled. */ }
+    }
+    if (transactionHash.value && purchase.value.state === "not_started") purchase.value.state = "pending";
+    status.value = paymentAction.value === "verify_payment"
+      ? "Existing transfer recovered. Retry verification only; do not send another payment."
+      : paymentAction.value === "recover_hash"
+        ? "This purchase already has a payment attempt. Recover its original hash from Nimiq Pay; do not pay again."
+        : "Sealed preview loaded. Review the recipient and low-value testnet amount before the native payment approval.";
   } catch (error) {
     status.value =
       error instanceof Error ? error.message : "Preview loading failed.";
@@ -622,7 +651,7 @@ async function loadPreview() {
 }
 
 async function payAndUnlock() {
-  if (!purchase.value) return;
+  if (!purchase.value || paymentAction.value !== "new_payment") return;
   busy.value = true;
   track("payment_started");
   try {
@@ -632,10 +661,16 @@ async function payAndUnlock() {
       value: purchase.value.valueLuna,
       data: purchase.value.reference,
     });
+    try {
+      persistPaymentReceipt(window.localStorage, reportId.value, purchase.value.id, transactionHash.value);
+    } catch {
+      status.value = "Local receipt storage is unavailable. Keep the original transaction hash; do not pay again.";
+    }
+    purchase.value.state = "pending";
     track("payment_submitted");
     await verifyPayment(true);
   } catch (error) {
-    track("payment_cancelled");
+    track(transactionHash.value ? "payment_failed" : "payment_cancelled");
     status.value =
       error instanceof Error
         ? error.message
@@ -646,7 +681,7 @@ async function payAndUnlock() {
 }
 
 async function verifyPayment(poll = false) {
-  if (!purchase.value || !transactionHash.value) return;
+  if (!purchase.value || paymentAction.value !== "verify_payment") return;
   busy.value = true;
   try {
     const session = await authenticate("seeker");
@@ -670,6 +705,8 @@ async function verifyPayment(poll = false) {
       { headers: { authorization: `Bearer ${session.token}` } },
     );
     report.value = unlocked.report;
+    loadedReportState.value = "unlocked";
+    purchase.value!.state = "included";
     areaAggregate.value = await api(
       `/api/areas/${encodeURIComponent(report.value!.areaCell)}`,
     );
@@ -1077,7 +1114,8 @@ async function submitFeedback() {
       <label
         >Private report ID
         <input
-          v-model="reportId"
+          v-model.trim="reportId"
+          :disabled="busy"
           autocomplete="off"
           placeholder="report_…" /></label
       ><button
@@ -1090,14 +1128,20 @@ async function submitFeedback() {
         {{ preview.categories.join(" + ") }} ·
         {{ preview.confidence }} confidence · {{ preview.scorerVersion }}
       </p>
+      <p v-if="paymentAction === 'reload_report'">The report ID changed. Load its preview before any payment or verification.</p>
+      <label v-if="purchase && !report && paymentAction !== 'reload_report'">
+        Original transaction hash (if a payment was already submitted)
+        <input v-model.trim="transactionHash" :disabled="busy" autocomplete="off" placeholder="Recover the 64-character hash from Nimiq Pay" />
+        Retry verification with this receipt; never pay again because confirmation is delayed.
+      </label>
       <button
-        v-if="purchase && !transactionHash"
+        v-if="purchase && paymentAction === 'new_payment' && !report"
         :disabled="busy || consensus !== true"
         @click="payAndUnlock"
       >
         Approve {{ purchase.valueLuna / 100000 }} NIM direct payment</button
       ><button
-        v-if="purchase && transactionHash && !report"
+        v-if="purchase && paymentAction === 'verify_payment' && !report"
         :disabled="busy"
         @click="verifyPayment(false)"
       >

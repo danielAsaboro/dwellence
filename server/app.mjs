@@ -1358,12 +1358,24 @@ export function createApp({
           session &&
           store
             .prepare(
-              "SELECT preview_json, price_luna, contributor_address FROM reports WHERE id = ? AND seeker_address = ?",
+              "SELECT status, preview_json, price_luna, contributor_address FROM reports WHERE id = ? AND seeker_address = ?",
             )
             .get(previewMatch[1], session.wallet_address);
         if (!report)
           return send(response, 404, { code: "PRIVATE_REPORT_NOT_FOUND" });
+        const savedPurchase = store.prepare(
+          "SELECT id, reference, contributor_address, expected_luna, state, transaction_hash FROM purchases WHERE report_id = ? AND seeker_address = ?",
+        ).get(previewMatch[1], session.wallet_address);
         return send(response, 200, {
+          reportState: report.status,
+          purchase: savedPurchase ? {
+            id: savedPurchase.id,
+            reference: savedPurchase.reference,
+            recipient: savedPurchase.contributor_address,
+            valueLuna: savedPurchase.expected_luna,
+            state: savedPurchase.state,
+            transactionHash: savedPurchase.transaction_hash,
+          } : null,
           preview: JSON.parse(report.preview_json),
           priceLuna: report.price_luna,
           contributorAddress: report.contributor_address,
@@ -1439,6 +1451,14 @@ export function createApp({
         const { transactionHash } = await readJson(request);
         if (!/^[0-9a-f]{64}$/i.test(String(transactionHash)))
           return send(response, 400, { code: "INVALID_TRANSACTION_HASH" });
+        if (purchase.state === "included" && purchase.transaction_hash !== transactionHash)
+          return send(response, 409, { code: "PURCHASE_ALREADY_INCLUDED" });
+        // Keep a receipt before a network lookup can fail. This never unlocks a report.
+        if (purchase.state !== "included") {
+          store.prepare(
+            "UPDATE purchases SET transaction_hash = ?, state = 'pending' WHERE id = ?",
+          ).run(transactionHash, purchase.id);
+        }
         if (!nimiqRpcUrl && !transactionLookup)
           return send(response, 503, { code: "NIMIQ_RPC_NOT_CONFIGURED" });
         let transaction;
