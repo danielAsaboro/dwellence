@@ -16,7 +16,7 @@ describe("public website and application boundaries", () => {
     const html = await page("/");
     expect(html).toContain("A good address.");
     expect(html).toContain('href="/workspace"');
-    expect(html).not.toContain("Connect Nimiq Pay</button>");
+    expect(html).not.toContain("Connect Nimiq Pay");
     expect(html).not.toContain("Invited contributor Nimiq address");
     expect(html).not.toContain("Your evidence. Your permission.");
   });
