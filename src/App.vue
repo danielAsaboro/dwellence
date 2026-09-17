@@ -715,16 +715,59 @@ async function submitFeedback() {
 </script>
 
 <template>
+  <a class="skip-link" href="#workspace">Skip to measurement workspace</a>
   <main>
-    <header>
-      <p class="eyebrow">Dwellence · Nimiq Pay Mini App · testnet only</p>
-      <h1>Know how a place performs.</h1>
-      <p class="lede">
-        Commission fresh, private connectivity and environmental evidence for a
-        property. Reports are informational—not inspections, appraisals, or
-        guarantees.
-      </p>
+    <nav class="site-nav" aria-label="Main navigation">
+      <a class="wordmark" href="#home" aria-label="Dwellence home"><span class="brand-mark" aria-hidden="true">d.</span>Dwellence</a>
+      <div class="nav-links"><a href="#method">The approach</a><a href="#workspace">Workspace ↗</a></div>
+      <span class="network-tag"><i aria-hidden="true"></i>Nimiq Pay · Testnet</span>
+    </nav>
+    <header id="home" class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="short-rule"></span>A little certainty. Before you commit.</p>
+        <h1>A good address.<br />But how does it<br /><em>actually live?</em></h1>
+        <p class="lede">The listing tells a story. Get evidence of the everyday: the connection, the conditions, the things you’ll live with.</p>
+        <a class="primary-link" href="#workspace">Commission a measurement <span aria-hidden="true">↗</span></a>
+        <p class="hero-footnote">Private property reports. Direct NIM payments.<br />No inspections, appraisals, or guarantees.</p>
+      </div>
+      <div class="hero-art">
+        <div class="art-caption"><span>THE EVERYDAY, EXAMINED</span><span>FIELD NOTES / 01</span></div>
+        <svg class="architecture" viewBox="0 0 560 480" role="img" aria-labelledby="architecture-title">
+          <title id="architecture-title">Conceptual architectural drawing of a home and measurement points. Not a measured property.</title>
+          <defs><pattern id="draft-grid" width="28" height="28" patternUnits="userSpaceOnUse"><path d="M28 0H0V28" fill="none" stroke="#315445" stroke-opacity=".08" /></pattern></defs>
+          <rect width="560" height="480" fill="url(#draft-grid)" />
+          <g fill="none" stroke="#61786a"><path d="M40 372L304 440L527 304M40 390L304 458L527 322"/><path d="M68 86V388M501 100V339" stroke-dasharray="4 5"/></g>
+          <path d="M94 327L296 382L471 277L263 223Z" fill="#90aa91" />
+          <path d="M94 327V193L296 250V382Z" fill="#eae8dc" stroke="#354f40" stroke-width="1.4"/>
+          <path d="M296 250L471 146V277L296 382Z" fill="#bac7ad" stroke="#354f40" stroke-width="1.4"/>
+          <path d="M94 193L263 91L471 146L296 250Z" fill="#faf7ed" stroke="#354f40" stroke-width="1.4"/>
+          <path d="M118 193L264 106L444 153L295 238Z" fill="#d2d7c4" stroke="#809080"/>
+          <g stroke="#506959" fill="#f7f4e8" stroke-width="1.4"><path d="M127 223L173 236V287L127 274Z"/><path d="M200 244L264 262V327L200 309Z"/><path d="M326 254L364 231V284L326 307Z"/><path d="M391 215L439 186V238L391 267Z"/></g>
+          <g stroke="#809080" fill="none"><path d="M150 229V280M127 249L173 262M232 253V318M200 277L264 295M345 243V295M326 281L364 258M415 200V252M391 241L439 212"/></g>
+          <path d="M270 375V309L288 314V380" fill="#354f40"/>
+          <g fill="none" stroke="#355846"><circle cx="178" cy="172" r="16"/><circle cx="178" cy="172" r="28" stroke-opacity=".35"/><path d="M166 172Q178 159 190 172M171 177Q178 170 185 177" stroke-width="2"/></g><circle cx="178" cy="181" r="2" fill="#355846"/>
+          <g fill="none" stroke="#355846"><circle cx="382" cy="299" r="16"/><path d="M382 289V301M378 292H382M378 297H382" stroke-width="2"/><circle cx="382" cy="305" r="4"/><path d="M178 144V64H85M398 299H500V389H442"/></g>
+          <g fill="#355846" font-size="11" font-family="ui-monospace,monospace"><text x="86" y="49">01 / CONNECTIVITY</text><text x="342" y="409">02 / CONDITIONS</text><text x="56" y="431" font-size="9">CONCEPT DRAWING — NOT LIVE DATA</text></g>
+        </svg>
+        <div class="art-footer"><span class="art-symbol" aria-hidden="true">✳</span><p>A place is more than<br />what’s in the photographs.</p><span class="art-index">01—02</span></div>
+      </div>
     </header>
+    <section id="method" class="method" aria-labelledby="method-title">
+      <div class="method-intro"><p class="eyebrow">Less guesswork. More ground truth.</p><h2 id="method-title">Look beyond<br /><em>the listing.</em></h2></div>
+      <article><span class="method-number">01 / COMMISSION</span><h3>Ask about a real place.</h3><p>Invite a contributor, choose the evidence you need, and set a measurement window and report price.</p></article>
+      <article><span class="method-number">02 / MEASURE</span><h3>Keep the evidence fresh.</h3><p>Controlled connectivity checks and signed physical-sensor readings. Scores and confidence, kept separate.</p></article>
+      <article><span class="method-number">03 / DECIDE</span><h3>Pay for a private report.</h3><p>A direct NIM transfer to the contributor. Access opens only after independent payment verification.</p></article>
+    </section>
+    <div id="workspace" class="workspace-heading"><div><p class="eyebrow">YOUR FIELD WORKSPACE</p><h2>Let’s examine a place.</h2></div><span class="workspace-label">EARLY ACCESS / TESTNET ONLY</span></div>
+    <div class="workspace-layout">
+    <aside class="workspace-aside" aria-label="Measurement guide">
+      <span class="aside-index">DW / FIELD DESK</span><h3>Good decisions<br />start with<br /><em>better questions.</em></h3>
+      <p>Use two distinct wallets: one commissioning the report, one contributing the evidence.</p>
+      <ol><li>Connect &amp; give consent</li><li>Commission or contribute</li><li>Measure &amp; verify</li><li>Unlock your report</li></ol>
+      <div class="aside-note"><span aria-hidden="true">↳</span><p>Exact locations stay off-chain. Public scores only appear when privacy thresholds are met.</p></div>
+      <a href="https://github.com/danielAsaboro/dwellence" target="_blank" rel="noopener noreferrer">Open-source, by design ↗</a>
+    </aside>
+    <div class="workspace-content">
     <section v-if="!insideNimiqPay" class="notice">
       <strong>Nimiq Pay required:</strong> this browser can inspect the
       interface, but wallet signatures and report payment only work when this
@@ -738,7 +781,7 @@ async function submitFeedback() {
     </section>
     <section class="card wallet">
       <div>
-        <h2>1. Connect</h2>
+        <h2>01. Your wallet</h2>
         <p>{{ walletAddress || "No wallet connected" }}</p>
       </div>
       <button :disabled="busy" @click="connect">
@@ -748,7 +791,7 @@ async function submitFeedback() {
       >
     </section>
     <section class="card consent">
-      <h2>Specific consent</h2>
+      <h2>Your evidence. Your permission.</h2>
       <label
         ><input v-model="deviceConsent" type="checkbox" /> Allow Nimiq Pay to
         provide this app an origin-scoped device handle for replay and abuse
@@ -1217,5 +1260,8 @@ async function submitFeedback() {
       </p>
     </section>
     <p class="status" aria-live="polite">{{ status }}</p>
+    </div>
+    </div>
+    <footer class="site-footer"><a class="wordmark" href="#home">Dwellence.</a><p>Measure the everyday.<br />Make a more informed move.</p><div><span>Nimiq Pay Mini App · Testnet</span><a href="https://github.com/danielAsaboro/dwellence" target="_blank" rel="noopener noreferrer">Source &amp; documentation ↗</a><small>Informational reports. Not escrow. Not a guarantee.</small></div></footer>
   </main>
 </template>
