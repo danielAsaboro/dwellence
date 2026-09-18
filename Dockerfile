@@ -4,6 +4,8 @@ RUN apk add --no-cache python3 make g++
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
+ARG VITE_NIMIQ_NETWORK
+ENV VITE_NIMIQ_NETWORK=$VITE_NIMIQ_NETWORK
 RUN npm run build
 RUN npm prune --omit=dev
 

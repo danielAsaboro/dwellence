@@ -17,7 +17,7 @@ async function withApi(run) {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const url = `http://127.0.0.1:${server.address().port}`;
   try {
-    await run(url);
+    await run(url, store);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -182,6 +182,80 @@ describe("private request API", () => {
       });
       expect(rejected.status).toBe(400);
       expect(rejected.body.code).toBe("INVALID_ANALYTICS_EVENT");
+      const forgedMilestone = await json(url, "/api/analytics", {
+        method: "POST",
+        body: JSON.stringify({
+          event: "payment_included",
+          clientId: "client_1234567890123456",
+        }),
+      });
+      expect(forgedMilestone.status).toBe(400);
+      expect(forgedMilestone.body.code).toBe("INVALID_ANALYTICS_EVENT");
+      expect((await json(url, "/api/analytics", {
+        method: "POST",
+        body: JSON.stringify({ event: "app_opened_outside_nimiq_pay", clientId: "client_abcdefghijklmnop" }),
+      })).status).toBe(201);
+      expect((await json(url, "/api/analytics", {
+        method: "POST",
+        body: JSON.stringify({ event: "app_opened_outside_nimiq_pay", clientId: "client_abcdefghijklmnop" }),
+      })).status).toBe(201);
+      const limited = await json(url, "/api/analytics", {
+        method: "POST",
+        body: JSON.stringify({ event: "app_opened_outside_nimiq_pay", clientId: "client_abcdefghijklmnop" }),
+      });
+      expect(limited.status).toBe(429);
+    });
+  });
+
+  it("records an intentional target property separately from contributor measurement location", async () => {
+    await withApi(async (url, store) => {
+      const seeker = await authenticate(url, "seeker");
+      const contributor = await authenticate(url, "contributor");
+      const targetLocation = { latitude: 40.7128, longitude: -74.006, label: "Target apartment" };
+      const result = await createSignedRequest(url, seeker, {
+        targetLocation,
+        invitedContributor: contributor.address,
+        requiredCategories: ["connectivity"],
+        windowStartsAt: Date.now(),
+        windowEndsAt: Date.now() + 60_000,
+        priceLuna: 1000,
+      });
+      expect(result.status, JSON.stringify(result.body)).toBe(201);
+      const row = store.prepare("SELECT public_cell, location_ciphertext FROM requests WHERE id = ?").get(result.body.id);
+      expect(row.public_cell).toBe("40.71,-74.01");
+      expect(row.location_ciphertext).not.toContain("40.7128");
+      expect(store.prepare("SELECT source FROM analytics_events WHERE event = 'request_created' ORDER BY id DESC LIMIT 1").get().source).toBe("server");
+    });
+  });
+
+  it("records versioned consent and supports explicit withdrawal for an unpublished request", async () => {
+    await withApi(async (url, store) => {
+      const seeker = await authenticate(url, "seeker");
+      const consent = await json(url, "/api/consents", {
+        method: "POST",
+        headers: { authorization: `Bearer ${seeker.token}` },
+        body: JSON.stringify({ policyVersion: "privacy-2026-09-18", purposes: ["location", "retention"] }),
+      });
+      expect(consent.status, JSON.stringify(consent.body)).toBe(201);
+      const canonicalSeeker = seeker.address.replaceAll(" ", "").toUpperCase();
+      expect(store.prepare("SELECT policy_version, purposes_json FROM consent_receipts WHERE wallet_address = ?").get(canonicalSeeker)).toMatchObject({ policy_version: "privacy-2026-09-18" });
+      const contributor = await authenticate(url, "contributor");
+      const request = await createSignedRequest(url, seeker, {
+        targetLocation: { latitude: 6.5, longitude: 3.3, label: "Private target" },
+        invitedContributor: contributor.address,
+        windowStartsAt: Date.now(),
+        windowEndsAt: Date.now() + 60_000,
+        priceLuna: 1000,
+      });
+      expect(request.status).toBe(201);
+      const withdrawn = await json(url, "/api/privacy/withdraw", {
+        method: "POST",
+        headers: { authorization: `Bearer ${seeker.token}` },
+        body: "{}",
+      });
+      expect(withdrawn.status).toBe(200);
+      expect(store.prepare("SELECT id FROM requests WHERE seeker_address = ?").get(canonicalSeeker)).toBeUndefined();
+      expect(store.prepare("SELECT action FROM privacy_actions WHERE wallet_address = ? ORDER BY created_at DESC LIMIT 1").get(canonicalSeeker).action).toBe("withdraw");
     });
   });
 

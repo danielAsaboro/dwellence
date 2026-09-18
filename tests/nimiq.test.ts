@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { connectWallet, requestAbuseControlDeviceHandle, sendPurchasePayment } from '../src/lib/nimiq'
+import { assertTestnetPaymentConfiguration, connectWallet, requestAbuseControlDeviceHandle, sendPurchasePayment } from '../src/lib/nimiq'
 
 describe('Nimiq Pay connection', () => {
   it('uses the injected provider only after a user-triggered connection action', async () => {
@@ -7,6 +7,7 @@ describe('Nimiq Pay connection', () => {
     const result = await connectWallet(async () => ({
       isConsensusEstablished: async () => { calls.push('consensus'); return true },
       listAccounts: async () => { calls.push('accounts'); return ['NQ12 TEST'] },
+      getNetwork: () => 'nimiq',
     }) as never)
 
     expect(result).toEqual({ address: 'NQ12 TEST', consensusEstablished: true })
@@ -20,7 +21,20 @@ describe('Nimiq Pay connection', () => {
   it('does not send a direct NIM payment before wallet consensus is established', async () => {
     await expect(sendPurchasePayment({ recipient: 'NQ12 TEST', value: 1000, data: 'rep:opaque' }, async () => ({
       isConsensusEstablished: async () => false,
-    }) as never)).rejects.toThrow('consensus is not established')
+      getNetwork: () => 'nimiq',
+    }) as never, 'testnet')).rejects.toThrow('consensus is not established')
+  })
+
+  it('refuses payment when the app is not explicitly configured for testnet', async () => {
+    await expect(assertTestnetPaymentConfiguration('mainnet')).rejects.toThrow('testnet')
+  })
+
+  it('refuses payment through a provider that is not the documented Nimiq provider network', async () => {
+    await expect(sendPurchasePayment({ recipient: 'NQ12 TEST', value: 1000, data: 'rep:opaque' }, async () => ({
+      getNetwork: () => 'ethereum',
+      isConsensusEstablished: async () => true,
+      getBlockNumber: async () => 1,
+    }) as never, 'testnet')).rejects.toThrow('Nimiq provider network')
   })
 
   it('requests a device handle only with the explicit anti-abuse consent reason', async () => {

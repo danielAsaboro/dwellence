@@ -42,6 +42,14 @@ function opaqueId(prefix) {
   return `${prefix}_${randomBytes(18).toString("base64url")}`;
 }
 
+function recordAnalytics(store, event, subject, source = "server", now = Date.now()) {
+  store
+    .prepare(
+      "INSERT INTO analytics_events (event, client_digest, source, created_at) VALUES (?, ?, ?, ?)",
+    )
+    .run(event, sha256(subject), source, now);
+}
+
 function encryptLocation(value, secret) {
   const iv = randomBytes(12);
   const key = createHash("sha256").update(secret).digest();
@@ -112,7 +120,7 @@ function requireSession(request, store, role) {
   if (!token) return null;
   const session = store
     .prepare(
-      "SELECT wallet_address, role FROM sessions WHERE token_digest = ? AND expires_at >= ?",
+      "SELECT wallet_address, role, device_handle_digest FROM sessions WHERE token_digest = ? AND expires_at >= ?",
     )
     .get(sha256(token), Date.now());
   return session && (!role || session.role === role) ? session : null;
@@ -161,6 +169,7 @@ function connectivityMessage(reading) {
 }
 
 function requestDigest({
+  targetLocation,
   location,
   invitedContributor,
   requiredCategories,
@@ -170,8 +179,8 @@ function requestDigest({
 }) {
   return sha256(
     JSON.stringify({
-      latitude: Number(location?.latitude),
-      longitude: Number(location?.longitude),
+      latitude: Number((targetLocation ?? location)?.latitude),
+      longitude: Number((targetLocation ?? location)?.longitude),
       invitedContributor: canonicalAddress(invitedContributor),
       requiredCategories: normalizeRequiredCategories(requiredCategories),
       windowStartsAt: Number(windowStartsAt),
@@ -358,28 +367,6 @@ export function createApp({
         const allowed = new Set([
           "app_opened_inside_nimiq_pay",
           "app_opened_outside_nimiq_pay",
-          "wallet_request_started",
-          "wallet_request_approved",
-          "wallet_request_denied",
-          "request_created",
-          "request_shared",
-          "request_accepted",
-          "request_expired",
-          "measurement_started",
-          "measurement_completed",
-          "measurement_rejected",
-          "sensor_challenge_passed",
-          "sensor_challenge_failed",
-          "report_previewed",
-          "payment_started",
-          "payment_cancelled",
-          "payment_submitted",
-          "payment_included",
-          "payment_failed",
-          "report_unlocked",
-          "aggregate_viewed",
-          "aggregate_suppressed",
-          "feedback_submitted",
         ]);
         if (
           Object.keys(payload).some(
@@ -389,12 +376,72 @@ export function createApp({
           !/^client_[a-zA-Z0-9_-]{16,80}$/.test(String(payload.clientId))
         )
           return send(response, 400, { code: "INVALID_ANALYTICS_EVENT" });
+        if (!withinRateLimit(store, `analytics:${payload.clientId}`, 2, 24 * 60 * 60_000))
+          return send(response, 429, { code: "RATE_LIMITED" });
         store
           .prepare(
-            "INSERT INTO analytics_events (event, client_digest, created_at) VALUES (?, ?, ?)",
+            "INSERT INTO analytics_events (event, client_digest, source, created_at) VALUES (?, ?, 'client', ?)",
           )
           .run(payload.event, sha256(payload.clientId), Date.now());
         return send(response, 201, { status: "recorded" });
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/consents") {
+        const session = requireSession(request, store);
+        if (!session) return send(response, 401, { code: "AUTH_REQUIRED" });
+        const payload = await readJson(request);
+        const allowedPurposes = new Set(["device", "location", "measurement", "retention", "aggregation", "payment"]);
+        if (
+          typeof payload.policyVersion !== "string" ||
+          !/^[a-zA-Z0-9._-]{1,64}$/.test(payload.policyVersion) ||
+          !Array.isArray(payload.purposes) ||
+          new Set(payload.purposes).size !== payload.purposes.length ||
+          payload.purposes.some((purpose) => !allowedPurposes.has(purpose))
+        ) return send(response, 400, { code: "INVALID_CONSENT_RECEIPT" });
+        const now = Date.now();
+        const id = opaqueId("consent");
+        store.prepare("INSERT INTO consent_receipts (id, wallet_address, role, device_handle_digest, policy_version, purposes_json, granted_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+          .run(id, session.wallet_address, session.role, session.device_handle_digest ?? null, payload.policyVersion, JSON.stringify([...payload.purposes].sort()), now);
+        return send(response, 201, { receiptId: id, recordedAt: now });
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/privacy/withdraw") {
+        const session = requireSession(request, store);
+        if (!session) return send(response, 401, { code: "AUTH_REQUIRED" });
+        const wallet = session.wallet_address;
+        const affected = store.prepare("SELECT id FROM requests WHERE seeker_address = ? OR accepted_by = ?").all(wallet, wallet);
+        store.exec("BEGIN IMMEDIATE");
+        try {
+          let deletedRequests = 0;
+          for (const { id: requestId } of affected) {
+            const report = store.prepare("SELECT id FROM reports WHERE request_id = ?").get(requestId);
+            if (report) {
+              store.prepare("DELETE FROM connectivity_measurements WHERE request_id = ?").run(requestId);
+              store.prepare("DELETE FROM sensor_readings WHERE request_id = ?").run(requestId);
+              store.prepare("DELETE FROM contributor_observations WHERE request_id = ?").run(requestId);
+              store.prepare("UPDATE requests SET location_ciphertext = 'generalized-after-withdrawal', public_cell = 'withdrawn', seeker_address = CASE WHEN seeker_address = ? THEN 'withdrawn' ELSE seeker_address END, accepted_by = CASE WHEN accepted_by = ? THEN 'withdrawn' ELSE accepted_by END WHERE id = ?").run(wallet, wallet, requestId);
+            } else {
+              store.prepare("DELETE FROM contributor_observations WHERE request_id = ?").run(requestId);
+              store.prepare("DELETE FROM connectivity_measurements WHERE request_id = ?").run(requestId);
+              store.prepare("DELETE FROM sensor_readings WHERE request_id = ?").run(requestId);
+              store.prepare("DELETE FROM requests WHERE id = ?").run(requestId);
+              deletedRequests += 1;
+            }
+          }
+          store.prepare("UPDATE reports SET seeker_address = CASE WHEN seeker_address = ? THEN 'withdrawn' ELSE seeker_address END, contributor_address = CASE WHEN contributor_address = ? THEN 'withdrawn' ELSE contributor_address END WHERE seeker_address = ? OR contributor_address = ?").run(wallet, wallet, wallet, wallet);
+          store.prepare("UPDATE purchases SET seeker_address = CASE WHEN seeker_address = ? THEN 'withdrawn' ELSE seeker_address END, contributor_address = CASE WHEN contributor_address = ? THEN 'withdrawn' ELSE contributor_address END WHERE seeker_address = ? OR contributor_address = ?").run(wallet, wallet, wallet, wallet);
+          store.prepare("DELETE FROM sensors WHERE operator_address = ?").run(wallet);
+          store.prepare("DELETE FROM consent_receipts WHERE wallet_address = ?").run(wallet);
+          store.prepare("DELETE FROM sessions WHERE wallet_address = ?").run(wallet);
+          const now = Date.now();
+          const actionId = opaqueId("privacy");
+          store.prepare("INSERT INTO privacy_actions (id, wallet_address, action, details_json, created_at) VALUES (?, ?, 'withdraw', ?, ?)").run(actionId, wallet, JSON.stringify({ deletedRequests }), now);
+          store.exec("COMMIT");
+          return send(response, 200, { actionId, deletedRequests, status: "withdrawn" });
+        } catch (error) {
+          store.exec("ROLLBACK");
+          throw error;
+        }
       }
 
       if (request.method === "POST" && url.pathname === "/api/feedback") {
@@ -580,7 +627,8 @@ export function createApp({
         if (!session)
           return send(response, 401, { code: "SEEKER_AUTH_REQUIRED" });
         const {
-          location,
+          targetLocation: suppliedTargetLocation,
+          location: legacyLocation,
           invitedContributor,
           requiredCategories: requestedCategories,
           windowStartsAt,
@@ -590,13 +638,14 @@ export function createApp({
           publicKey,
           signature,
         } = await readJson(request);
+        const targetLocation = suppliedTargetLocation ?? legacyLocation;
         const requiredCategories =
           normalizeRequiredCategories(requestedCategories);
         if (!requestChallengeId || !publicKey || !signature)
           return send(response, 401, { code: "REQUEST_SIGNATURE_REQUIRED" });
         if (
           !requiredCategories ||
-          !validCoordinates(location) ||
+          !validCoordinates(targetLocation) ||
           !isValidNimiqAddress(invitedContributor) ||
           !Number.isInteger(priceLuna) ||
           priceLuna <= 0 ||
@@ -606,7 +655,7 @@ export function createApp({
         )
           return send(response, 400, { code: "INVALID_REQUEST" });
         const digest = requestDigest({
-          location,
+          targetLocation,
           invitedContributor,
           requiredCategories,
           windowStartsAt,
@@ -657,8 +706,8 @@ export function createApp({
             id,
             session.wallet_address,
             canonicalAddress(invitedContributor),
-            encryptLocation(location, locationEncryptionKey),
-            publicCell(location.latitude, location.longitude),
+            encryptLocation(targetLocation, locationEncryptionKey),
+            publicCell(targetLocation.latitude, targetLocation.longitude),
             windowStartsAt,
             windowEndsAt,
             priceLuna,
@@ -667,6 +716,7 @@ export function createApp({
             "shared",
             Date.now(),
           );
+        recordAnalytics(store, "request_created", session.wallet_address);
         return send(response, 201, { id, shareCode, status: "shared" });
       }
 
@@ -702,6 +752,7 @@ export function createApp({
           );
         if (updated.changes !== 1)
           return send(response, 409, { code: "REQUEST_UNAVAILABLE" });
+        recordAnalytics(store, "request_accepted", session.wallet_address);
         return send(response, 200, {
           id: invitation.id,
           status: "accepted",
@@ -975,6 +1026,7 @@ export function createApp({
         } catch {
           return send(response, 409, { code: "SENSOR_PAYLOAD_REPLAYED" });
         }
+        recordAnalytics(store, "sensor_reading_accepted", sensor.operator_address);
         return send(response, 201, {
           status: "accepted",
           integrity: "valid_signature_and_nonce",
@@ -1131,6 +1183,7 @@ export function createApp({
         } catch {
           return send(response, 409, { code: "CONNECTIVITY_PAYLOAD_REPLAYED" });
         }
+        recordAnalytics(store, "measurement_completed", session.wallet_address);
         return send(response, 201, {
           status: "accepted",
           integrity: "session_nonce_and_context_valid",
@@ -1505,6 +1558,8 @@ export function createApp({
         store
           .prepare("UPDATE reports SET status = 'unlocked' WHERE id = ?")
           .run(purchase.report_id);
+        recordAnalytics(store, "payment_included", session.wallet_address);
+        recordAnalytics(store, "report_unlocked", session.wallet_address);
         return send(response, 200, {
           state: "included",
           reportId: purchase.report_id,

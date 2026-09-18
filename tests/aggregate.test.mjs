@@ -23,8 +23,17 @@ describe('privacy-safe area aggregation', () => {
     const rows = Array.from({ length: 5 }, (_, index) => ({ accepted_by: `wallet-${index}`, sensor_id: `sensor-${index}`, accepted_at: now - index * day, report_json: report(60 + index * 5, 50 + index * 5) }))
     const result = buildAreaAggregate('6.50,3.30', rows, now)
     expect(result.state).toBe('published')
-    expect(result.score).toEqual(expect.objectContaining({ scorerVersion: 'area-1', confidence: 'medium' }))
+    expect(result.score).toEqual(expect.objectContaining({ scorerVersion: 'area-2', confidence: 'descriptive' }))
     expect(result.score.confidenceBand.lower).toBeLessThanOrEqual(result.score.confidenceBand.upper)
     expect(result.timeSpan).toEqual({ from: now - 4 * day, to: now })
+  })
+
+  it('does not treat multiple sensors controlled by one wallet as independent contributors', () => {
+    const now = Date.UTC(2026, 8, 6)
+    const rows = Array.from({ length: 5 }, (_, index) => ({ accepted_by: 'one-wallet', sensor_id: `sensor-${index}`, accepted_at: now - index * day, report_json: report(80, 80) }))
+    const result = buildAreaAggregate('6.50,3.30', rows, now)
+    expect(result.state).toBe('insufficient_evidence')
+    expect(result.independentContributors).toBe(1)
+    expect(result.independencePolicy).toContain('one wallet')
   })
 })

@@ -276,7 +276,7 @@ describe("private request to independently verified report unlock", () => {
       expect(aggregate.body.state).toBe("insufficient_evidence");
       expect(aggregate.body.score).toBeUndefined();
       expect(aggregate.body.thresholds).toEqual({
-        contributorDevicePairs: 5,
+        independentContributors: 5,
         distinctDays: 3,
       });
       const preview = await json(

@@ -46,6 +46,24 @@ export function createStore(filename) {
       id INTEGER PRIMARY KEY,
       event TEXT NOT NULL,
       client_digest TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'client',
+      created_at INTEGER NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS consent_receipts (
+      id TEXT PRIMARY KEY,
+      wallet_address TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('seeker', 'contributor')),
+      device_handle_digest TEXT,
+      policy_version TEXT NOT NULL,
+      purposes_json TEXT NOT NULL,
+      granted_at INTEGER NOT NULL,
+      withdrawn_at INTEGER
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS privacy_actions (
+      id TEXT PRIMARY KEY,
+      wallet_address TEXT NOT NULL,
+      action TEXT NOT NULL,
+      details_json TEXT NOT NULL,
       created_at INTEGER NOT NULL
     ) STRICT;
     CREATE TABLE IF NOT EXISTS tester_feedback (
@@ -136,6 +154,12 @@ export function createStore(filename) {
     .map((column) => column.name);
   if (!sessionColumns.includes("device_handle_digest"))
     db.exec("ALTER TABLE sessions ADD COLUMN device_handle_digest TEXT");
+  const analyticsColumns = db
+    .prepare("PRAGMA table_info(analytics_events)")
+    .all()
+    .map((column) => column.name);
+  if (!analyticsColumns.includes("source"))
+    db.exec("ALTER TABLE analytics_events ADD COLUMN source TEXT NOT NULL DEFAULT 'client'");
   const connectivityColumns = db
     .prepare("PRAGMA table_info(connectivity_measurements)")
     .all()

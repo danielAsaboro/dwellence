@@ -54,17 +54,17 @@ npm run server
 Start the Mini App in a separate terminal:
 
 ```sh
-VITE_API_URL='http://YOUR-LAN-IP:8787' VITE_PROBE_URL='http://YOUR-LAN-IP:8787/probe' npm run dev -- --host
+VITE_API_URL='http://YOUR-LAN-IP:8787' VITE_PROBE_URL='http://YOUR-LAN-IP:8787/probe' VITE_NIMIQ_NETWORK='testnet' npm run dev -- --host
 ```
 
-Load the network URL from Nimiq Pay on a phone connected to the same network. Use testnet and low-value accounts. Never enter a private key or recovery phrase into this app.
+Load the network URL from Nimiq Pay on a phone connected to the same network. Use testnet and low-value accounts. The production build must set `VITE_NIMIQ_NETWORK=testnet`; payment stays disabled when this explicit guard is absent. Never enter a private key or recovery phrase into this app.
 
 ## Production container
 
 Build and run the same-origin production image on an HTTPS host with a persistent volume mounted at `/data`:
 
 ```sh
-docker build -t dwellence .
+docker build --build-arg VITE_NIMIQ_NETWORK=testnet -t dwellence .
 docker run --rm -p 8787:8787 \
   -e LOCATION_ENCRYPTION_KEY='a-unique-server-secret-at-least-24-characters' \
   -e NIMIQ_RPC_URL='https://YOUR-VERIFIED-TESTNET-NIMIQ-RPC' \

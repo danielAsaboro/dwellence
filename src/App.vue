@@ -15,11 +15,14 @@ import { pollPaymentInclusion, recoveryAction, persistPaymentReceipt, recoverPay
 import { calculateSuitability } from "./lib/suitability";
 import { requireConsents } from "./lib/consent";
 import { measurementProgressText } from "./lib/measurement-progress";
+import { fetchWithTimeout } from "./lib/transport";
 
 const apiUrl = (import.meta.env.VITE_API_URL || window.location.origin).replace(
   /\/$/,
   "",
 );
+const nimqNetwork = import.meta.env.VITE_NIMIQ_NETWORK || "";
+const consentPolicyVersion = "privacy-2026-09-18";
 const probeUrl = (
   import.meta.env.VITE_PROBE_URL || `${window.location.origin}/probe`
 ).replace(/\/$/, "");
@@ -53,6 +56,9 @@ const acceptedTask = ref<{
   windowEndsAt: number;
 } | null>(null);
 const contributorAddress = ref("");
+const targetLatitude = ref("");
+const targetLongitude = ref("");
+const targetLabel = ref("Private target property");
 const priceNim = ref("0.01");
 const windowMinutes = ref(60);
 const requireConnectivity = ref(true);
@@ -159,11 +165,12 @@ const suitabilityScore = computed(() =>
 );
 
 function track(event: string) {
-  void fetch(`${apiUrl}/api/analytics`, {
+  if (!event.startsWith("app_opened_")) return;
+  void fetchWithTimeout(`${apiUrl}/api/analytics`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ event, clientId: analyticsClientId }),
-  }).catch(() => undefined);
+  }, fetch, 10_000).catch(() => undefined);
 }
 
 onMounted(() => {
@@ -178,10 +185,10 @@ onMounted(() => {
 async function api(path: string, options: RequestInit = {}) {
   if (!apiUrl)
     throw new Error("VITE_API_URL is not configured for this Mini App.");
-  const response = await fetch(`${apiUrl}${path}`, {
+  const response = await fetchWithTimeout(`${apiUrl}${path}`, {
     ...options,
     headers: { "content-type": "application/json", ...(options.headers ?? {}) },
-  });
+  }, fetch, 15_000);
   const body = await response.json();
   if (!response.ok)
     throw new Error(
@@ -213,6 +220,21 @@ async function authenticate(role: "seeker" | "contributor") {
     }),
   });
   sessionTokens.value[role] = session.token;
+  await api("/api/consents", {
+    method: "POST",
+    headers: { authorization: `Bearer ${session.token}` },
+    body: JSON.stringify({
+      policyVersion: consentPolicyVersion,
+      purposes: [
+        ...(deviceConsent.value ? ["device"] : []),
+        ...(locationConsent.value ? ["location"] : []),
+        ...(measurementConsent.value ? ["measurement"] : []),
+        ...(retentionConsent.value ? ["retention"] : []),
+        ...(aggregationConsent.value ? ["aggregation"] : []),
+        ...(paymentConsent.value ? ["payment"] : []),
+      ],
+    }),
+  });
   return session;
 }
 
@@ -254,13 +276,10 @@ async function createRequest() {
       ["location", "measurement", "retention", "aggregation"],
     );
     const session = await authenticate("seeker");
-    const position = await new Promise<GeolocationPosition>((resolve, reject) =>
-      navigator.geolocation.getCurrentPosition(resolve, reject, {
-        enableHighAccuracy: true,
-        timeout: 15_000,
-        maximumAge: 0,
-      }),
-    );
+    const latitude = Number(targetLatitude.value);
+    const longitude = Number(targetLongitude.value);
+    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180)
+      throw new Error("Enter the target property's latitude and longitude; contributor presence is measured separately.");
     const requiredCategories = [
       ...(requireConnectivity.value ? ["connectivity"] : []),
       ...(requireEnvironmentalComfort.value ? ["environmental_comfort"] : []),
@@ -271,10 +290,10 @@ async function createRequest() {
     if (!Number.isInteger(duration) || duration < 10 || duration > 1440)
       throw new Error("Choose a measurement window from 10 to 1,440 minutes.");
     const draft = {
-      location: {
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-        label: "Private property",
+      targetLocation: {
+        latitude,
+        longitude,
+        label: targetLabel.value.trim() || "Private target property",
       },
       invitedContributor: contributorAddress.value,
       requiredCategories,
@@ -660,7 +679,7 @@ async function payAndUnlock() {
       recipient: purchase.value.recipient,
       value: purchase.value.valueLuna,
       data: purchase.value.reference,
-    });
+    }, undefined, nimqNetwork);
     try {
       persistPaymentReceipt(window.localStorage, reportId.value, purchase.value.id, transactionHash.value);
     } catch {
@@ -748,6 +767,26 @@ async function submitFeedback() {
   } catch (error) {
     status.value =
       error instanceof Error ? error.message : "Feedback submission failed.";
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function withdrawData() {
+  busy.value = true;
+  try {
+    const session = await authenticate(mode.value);
+    await api("/api/privacy/withdraw", {
+      method: "POST",
+      headers: { authorization: `Bearer ${session.token}` },
+      body: "{}",
+    });
+    sessionTokens.value = {};
+    requestId.value = "";
+    report.value = null;
+    status.value = "Your unpublished requests and raw evidence were deleted or generalized; future actions require fresh consent.";
+  } catch (error) {
+    status.value = error instanceof Error ? error.message : "Privacy withdrawal failed.";
   } finally {
     busy.value = false;
   }
@@ -874,6 +913,9 @@ async function submitFeedback() {
         payment is a direct, irreversible NIM transfer to the contributor and
         Dwellence is not escrow.</label
       >
+      <button class="secondary" :disabled="busy || !walletAddress" @click="withdrawData">
+        Withdraw and delete my unpublished data
+      </button>
     </section>
     </div>
     <div v-show="deskPanel === 'requests'" class="desk-panel" aria-label="Requests and measurements">
@@ -897,6 +939,13 @@ async function submitFeedback() {
             autocomplete="off"
             placeholder="NQ…"
         /></label>
+        <label
+          >Target property label<input v-model="targetLabel" autocomplete="off" placeholder="Private target property" /></label
+        ><label
+          >Target property latitude<input v-model="targetLatitude" inputmode="decimal" autocomplete="off" placeholder="e.g. 6.5244" /></label
+        ><label
+          >Target property longitude<input v-model="targetLongitude" inputmode="decimal" autocomplete="off" placeholder="e.g. 3.3792" /></label
+        ><p class="field-note">This is the place you want measured. The contributor's current location is collected separately during the measurement and is never assumed to be the target.</p>
         <fieldset>
           <legend>Required evidence</legend>
           <label
@@ -1136,10 +1185,11 @@ async function submitFeedback() {
       </label>
       <button
         v-if="purchase && paymentAction === 'new_payment' && !report"
-        :disabled="busy || consensus !== true"
+        :disabled="busy || consensus !== true || nimqNetwork !== 'testnet'"
         @click="payAndUnlock"
       >
         Approve {{ purchase.valueLuna / 100000 }} NIM direct payment</button
+      ><p v-if="purchase && nimqNetwork !== 'testnet'" class="notice">Payments are fail-closed until this build is explicitly configured with <code>VITE_NIMIQ_NETWORK=testnet</code>.</p
       ><button
         v-if="purchase && paymentAction === 'verify_payment' && !report"
         :disabled="busy"

@@ -12,17 +12,33 @@ export async function lookupIncludedTransaction(
   rpcUrl,
   hash,
   fetchImpl = fetch,
+  timeoutMs = 10_000,
 ) {
-  const response = await fetchImpl(rpcUrl, {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  let response;
+  try {
+    response = await fetchImpl(rpcUrl, {
     method: "POST",
     headers: { "content-type": "application/json" },
+    signal: controller.signal,
     body: JSON.stringify({
       jsonrpc: "2.0",
       id: `purchase-${hash}`,
       method: "getTransactionByHash",
       params: [hash],
     }),
-  });
+    });
+  } catch (error) {
+    if (timedOut) throw new Error("Nimiq RPC request timed out");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
   if (!response.ok)
     throw new Error(`Nimiq RPC returned HTTP ${response.status}`);
   const body = await response.json();

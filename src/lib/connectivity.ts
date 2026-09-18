@@ -13,7 +13,10 @@ export interface ConnectivityProbeOptions {
   endpoint: string;
   fetchImpl?: typeof fetch;
   now?: () => number;
+  timeoutMs?: number;
 }
+
+import { fetchWithTimeout } from './transport'
 
 function rateMbps(bytes: number, milliseconds: number): number {
   if (milliseconds <= 0) throw new Error("Probe timing was invalid");
@@ -24,14 +27,17 @@ export async function runConnectivityProbe({
   endpoint,
   fetchImpl = fetch,
   now = () => performance.now(),
+  timeoutMs = 15_000,
 }: ConnectivityProbeOptions): Promise<ConnectivityProbeResult> {
   const baseUrl = endpoint.replace(/\/$/, "");
   const payload = new Uint8Array(125_000);
   try {
     const downloadStarted = now();
-    const downloadResponse = await fetchImpl(
+    const downloadResponse = await fetchWithTimeout(
       `${baseUrl}/download?bytes=${payload.byteLength}`,
       { cache: "no-store" },
+      fetchImpl,
+      timeoutMs,
     );
     if (!downloadResponse.ok)
       throw new Error(`Download endpoint returned ${downloadResponse.status}`);
@@ -40,11 +46,11 @@ export async function runConnectivityProbe({
     const downloadMbps = rateMbps(downloaded.byteLength, downloadDurationMs);
 
     const uploadStarted = now();
-    const uploadResponse = await fetchImpl(`${baseUrl}/upload`, {
+    const uploadResponse = await fetchWithTimeout(`${baseUrl}/upload`, {
       method: "POST",
       body: payload,
       cache: "no-store",
-    });
+    }, fetchImpl, timeoutMs);
     if (!uploadResponse.ok)
       throw new Error(`Upload endpoint returned ${uploadResponse.status}`);
     const uploadDurationMs = now() - uploadStarted;
@@ -53,9 +59,9 @@ export async function runConnectivityProbe({
     const pings: number[] = [];
     for (let index = 0; index < 3; index += 1) {
       const started = now();
-      const response = await fetchImpl(`${baseUrl}/ping?i=${index}`, {
+      const response = await fetchWithTimeout(`${baseUrl}/ping?i=${index}`, {
         cache: "no-store",
-      });
+      }, fetchImpl, timeoutMs);
       if (!response.ok)
         throw new Error(`Ping endpoint returned ${response.status}`);
       pings.push(now() - started);

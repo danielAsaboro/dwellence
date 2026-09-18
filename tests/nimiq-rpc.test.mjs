@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { lookupIncludedTransaction } from "../server/nimiq-rpc.mjs";
 
 describe("Nimiq RPC transaction lookup", () => {
+  it("aborts a provider request that exceeds the RPC deadline", async () => {
+    await expect(lookupIncludedTransaction("https://rpc.example", "a".repeat(64), async (_url, init) => await new Promise((_resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(new Error("aborted")));
+    }), 5)).rejects.toThrow("timed out");
+  });
+
   it("normalizes canonical RPC fields without trusting a client callback", async () => {
     const transaction = await lookupIncludedTransaction(
       "https://rpc.example",

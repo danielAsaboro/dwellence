@@ -10,7 +10,8 @@ Dwellence processes only the data needed to commission, verify, purchase, and pr
 - With separate consent, Nimiq Pay supplies an origin-scoped device handle for abuse controls. The backend stores only a one-way digest. The handle identifies a device, not a person.
 - A seeker supplies a precise property location and time window. A contributor grants session location to validate that a measurement occurred within the requested tolerance.
 - Connectivity results, environmental readings, sensor metadata, timestamps, and verification outcomes support the private report.
-- Minimal first-party analytics contain an allowlisted event name, a digest of an ephemeral in-memory client identifier, and a timestamp. Analytics reject additional fields and are deleted after 30 days.
+- Minimal first-party analytics contain only two throttled page-open events, a digest of an ephemeral in-memory client identifier, and a timestamp. Payment, measurement, and unlock milestones are recorded by the server after the corresponding state change; client-submitted milestone claims are rejected. Analytics are deleted after 30 days.
+- Versioned consent receipts record the policy version, selected purposes, wallet role, optional device-handle digest, and grant time. A signed-in participant can explicitly withdraw: unpublished requests and raw evidence are deleted, while retained paid records are anonymized and precise locations generalized. The withdrawal action itself is kept as a minimal audit record.
 - Optional early-access feedback contains a 1–5 rating, comment, consent timestamp, and digest of the ephemeral client identifier. It requests no name or wallet address, returns an opaque receipt ID, and is deleted after 90 days.
 - After an approved payment returns a transaction hash, this origin saves a local recovery receipt containing only its report ID, purchase ID, hash and timestamp. It contains no private key, session token, readings or coordinates. Receipts are ignored and removed when read after 90 days; browser storage can also be cleared by the user. Clearing it does not reverse a transfer. Authenticated server purchase state remains the primary recovery source; the original hash can be recovered from Nimiq Pay when local storage is unavailable.
 
@@ -18,7 +19,7 @@ Exact property and measurement locations are encrypted at rest and kept off-chai
 
 ## Sharing and public aggregates
 
-The purchasing wallet can access the full private report. The invited contributor receives only a coarse task area. Public area scores remain suppressed until at least five independent contributor/device pairs have qualifying evidence across at least three distinct days. No property point or contributor route is published.
+The purchasing wallet can access the full private report. The invited contributor receives only a coarse task area. Public area scores remain suppressed until at least five distinct contributor wallets have qualifying evidence across at least three distinct days. A wallet counts once, even if it controls multiple sensor identifiers. The reported band is descriptive, not a statistical confidence interval. No property point or contributor route is published.
 
 ## Retention and control
 
