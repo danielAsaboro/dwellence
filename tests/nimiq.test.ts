@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assertTestnetPaymentConfiguration, connectWallet, requestAbuseControlDeviceHandle, sendPurchasePayment } from '../src/lib/nimiq'
+import { assertTestnetPaymentConfiguration, connectWallet, requestAbuseControlDeviceHandle, restoreWalletSession, sendPurchasePayment } from '../src/lib/nimiq'
 
 describe('Nimiq Pay connection', () => {
   it('uses the injected provider only after a user-triggered connection action', async () => {
@@ -16,6 +16,30 @@ describe('Nimiq Pay connection', () => {
 
   it('does not represent an unavailable provider as a connected wallet', async () => {
     await expect(connectWallet(async () => { throw new Error('provider absent') })).rejects.toThrow('Nimiq Pay is unavailable')
+  })
+
+  it('rehydrates an already-connected provider without requesting wallet access again', async () => {
+    let accountCalls = 0
+    const result = await restoreWalletSession(async () => ({
+      connected: true,
+      isConsensusEstablished: async () => true,
+      listAccounts: async () => { accountCalls += 1; return ['NQ12 RESTORED'] },
+    }) as never)
+
+    expect(result).toEqual({ address: 'NQ12 RESTORED', consensusEstablished: true })
+    expect(accountCalls).toBe(1)
+  })
+
+  it('does not call listAccounts when the injected provider is disconnected on reload', async () => {
+    let accountCalls = 0
+    const result = await restoreWalletSession(async () => ({
+      connected: false,
+      isConsensusEstablished: async () => true,
+      listAccounts: async () => { accountCalls += 1; return ['NQ12 MUST-NOT-BE-QUERIED'] },
+    }) as never)
+
+    expect(result).toBeNull()
+    expect(accountCalls).toBe(0)
   })
 
   it('does not send a direct NIM payment before wallet consensus is established', async () => {

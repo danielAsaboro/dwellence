@@ -23,6 +23,34 @@ export async function connectWallet(getProvider: InitProvider = () => init({ tim
   return { address: accounts[0], consensusEstablished }
 }
 
+/**
+ * Rehydrate only a provider that the host already considers connected.
+ *
+ * Calling listAccounts() on a fresh provider can trigger a native wallet
+ * approval. Reload recovery must not silently initiate that approval, so a
+ * disconnected provider is left for the explicit reconnect button instead.
+ */
+export async function restoreWalletSession(getProvider: InitProvider = () => init({ timeout: 10_000 })) {
+  let provider: NimiqProvider
+  try {
+    provider = await withTimeout(getProvider(), 10_000, 'Nimiq Pay provider')
+  } catch {
+    return null
+  }
+  if (!provider.connected) return null
+
+  try {
+    const [consensusEstablished, accounts] = await Promise.all([
+      withTimeout(provider.isConsensusEstablished(), 10_000, 'Nimiq consensus check'),
+      withTimeout(provider.listAccounts(), 10_000, 'Nimiq account request'),
+    ])
+    if (!Array.isArray(accounts) || accounts.length === 0) return null
+    return { address: accounts[0], consensusEstablished }
+  } catch {
+    return null
+  }
+}
+
 export async function assertTestnetPaymentConfiguration(configuredNetwork = import.meta.env.VITE_NIMIQ_NETWORK): Promise<void> {
   if (configuredNetwork !== 'testnet') throw new Error('Nimiq testnet payment is disabled until the app is explicitly configured for testnet')
 }

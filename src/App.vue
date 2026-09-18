@@ -8,6 +8,7 @@ import { humanizeApiError } from "./lib/errors";
 import {
   connectWallet,
   requestAbuseControlDeviceHandle,
+  restoreWalletSession,
   sendPurchasePayment,
   signMessage,
 } from "./lib/nimiq";
@@ -180,6 +181,14 @@ onMounted(() => {
       ? "app_opened_inside_nimiq_pay"
       : "app_opened_outside_nimiq_pay",
   );
+  void restoreWalletSession().then((restored) => {
+    if (!restored) return;
+    walletAddress.value = restored.address;
+    consensus.value = restored.consensusEstablished;
+    status.value = restored.consensusEstablished
+      ? "Wallet session restored. You can sign a private request."
+      : "Wallet session restored, but consensus is unavailable.";
+  });
 });
 
 async function api(path: string, options: RequestInit = {}) {
